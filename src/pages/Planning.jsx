@@ -17,9 +17,18 @@ const STATUSES = [
 
 export default function Planning({ user }) {
   const [calendarDate, setCalendarDate] = useState(new Date());
+  const [robotWeekStart, setRobotWeekStart] = useState(() => {
+    const today = new Date();
+    const day = today.getDay() || 7;
+    const monday = new Date(today);
+    monday.setDate(today.getDate() - day + 1);
+    return monday;
+  });
   const [projects, setProjects] = useState([]);
   const [employees, setEmployees] = useState([]);
   const [taskTypes, setTaskTypes] = useState([]);
+  const [resources, setResources] = useState([]);
+  const [taskResources, setTaskResources] = useState([]);
   const [dayTasks, setDayTasks] = useState([]);
   const [message, setMessage] = useState("");
   const [modalOpen, setModalOpen] = useState(false);
@@ -31,6 +40,7 @@ export default function Planning({ user }) {
     project_id: "",
     employee_id: "",
     task_type_id: "",
+    resource_id: "",
     title: "",
     notes: "",
     status: "planned",
@@ -45,10 +55,11 @@ export default function Planning({ user }) {
     const monthStart = new Date(calendarDate.getFullYear(), calendarDate.getMonth(), 1);
     const monthEnd = new Date(calendarDate.getFullYear(), calendarDate.getMonth() + 1, 0);
 
-    const [projectsResponse, employeesResponse, taskTypesResponse, tasksResponse] = await Promise.all([
+    const [projectsResponse, employeesResponse, taskTypesResponse, resourcesResponse, tasksResponse, taskResourcesResponse] = await Promise.all([
       supabase.from("projects").select("*").eq("active", true).order("name"),
       supabase.from("employees").select("*").eq("active", true).order("name"),
       supabase.from("production_task_types").select("*").eq("active", true).order("name"),
+      supabase.from("resources").select("*").eq("active", true).order("name"),
       supabase
         .from("production_day_tasks")
         .select(`
@@ -60,13 +71,18 @@ export default function Planning({ user }) {
         .gte("task_date", monthStart.toISOString().slice(0, 10))
         .lte("task_date", monthEnd.toISOString().slice(0, 10))
         .order("task_date", { ascending: true }),
+      supabase
+        .from("production_task_resources")
+        .select("*, resources(name, resource_type, status)")
     ]);
 
     const error =
       projectsResponse.error ||
       employeesResponse.error ||
       taskTypesResponse.error ||
-      tasksResponse.error;
+      resourcesResponse.error ||
+      tasksResponse.error ||
+      taskResourcesResponse.error;
 
     if (error) {
       setMessage(error.message);
@@ -76,7 +92,9 @@ export default function Planning({ user }) {
     setProjects(projectsResponse.data || []);
     setEmployees(employeesResponse.data || []);
     setTaskTypes(taskTypesResponse.data || []);
+    setResources(resourcesResponse.data || []);
     setDayTasks(tasksResponse.data || []);
+    setTaskResources(taskResourcesResponse.data || []);
   }
 
   function dateToInputValue(date) {
@@ -115,6 +133,34 @@ export default function Planning({ user }) {
   function nextMonth() {
     setCalendarDate(new Date(calendarDate.getFullYear(), calendarDate.getMonth() + 1, 1));
   }
+  function previousRobotWeek() {
+    const next = new Date(robotWeekStart);
+    next.setDate(next.getDate() - 7);
+    setRobotWeekStart(next);
+  }
+
+  function nextRobotWeek() {
+    const next = new Date(robotWeekStart);
+    next.setDate(next.getDate() + 7);
+    setRobotWeekStart(next);
+  }
+
+  function currentRobotWeek() {
+    const today = new Date();
+    const day = today.getDay() || 7;
+    const monday = new Date(today);
+    monday.setDate(today.getDate() - day + 1);
+    setRobotWeekStart(monday);
+  }
+
+  function weekDaysFromMonday(mondayDate) {
+    return Array.from({ length: 7 }, (_, index) => {
+      const item = new Date(mondayDate);
+      item.setDate(mondayDate.getDate() + index);
+      return item;
+    });
+  }
+
 
   function tasksForDay(day) {
     if (!day) return [];
@@ -132,6 +178,39 @@ export default function Planning({ user }) {
     if (!day) return [];
     const value = dateToInputValue(day);
     return dayTasks.filter((task) => task.task_date === value && !task.employee_id);
+  }
+
+  function resourcesForTask(taskId) {
+    return taskResources.filter((row) => row.task_id === taskId);
+  }
+
+  function taskHasRobot(task) {
+    const rows = resourcesForTask(task.id);
+
+    return rows.some((row) => {
+      const name = (row.resources?.name || "").toLowerCase();
+      const type = (row.resources?.resource_type || "").toLowerCase();
+
+      return name.includes("robot") || name.includes("abb") || type === "robot";
+    });
+  }
+
+  function robotTasksForDay(day) {
+    if (!day) return [];
+
+    const value = dateToInputValue(day);
+
+    return dayTasks.filter((task) => task.task_date === value && taskHasRobot(task));
+  }
+
+  function resourceLabel(task) {
+    const rows = resourcesForTask(task.id);
+
+    if (rows.length === 0) return "Aucune ressource";
+
+    return rows
+      .map((row) => row.resources?.name || "Ressource")
+      .join(", ");
   }
 
   function weekDaysFrom(date) {
@@ -176,6 +255,7 @@ export default function Planning({ user }) {
       project_id: "",
       employee_id: "",
       task_type_id: defaultType,
+      resource_id: "",
       title: "",
       notes: "",
       status: "planned",
@@ -191,6 +271,7 @@ export default function Planning({ user }) {
       project_id: task.project_id || "",
       employee_id: task.employee_id || "",
       task_type_id: task.task_type_id || "",
+      resource_id: taskResources.find((row) => row.task_id === task.id)?.resource_id || "",
       title: task.title || "",
       notes: task.notes || "",
       status: task.status || "planned",
@@ -223,14 +304,35 @@ export default function Planning({ user }) {
     };
 
     const request = editingTask
-      ? supabase.from("production_day_tasks").update(payload).eq("id", editingTask.id)
-      : supabase.from("production_day_tasks").insert(payload);
+      ? supabase.from("production_day_tasks").update(payload).eq("id", editingTask.id).select().single()
+      : supabase.from("production_day_tasks").insert(payload).select().single();
 
-    const { error } = await request;
+    const { data: savedTask, error } = await request;
 
     if (error) {
       setMessage(error.message);
       return;
+    }
+
+    if (savedTask?.id) {
+      await supabase
+        .from("production_task_resources")
+        .delete()
+        .eq("task_id", savedTask.id);
+
+      if (form.resource_id) {
+        const { error: resourceError } = await supabase
+          .from("production_task_resources")
+          .insert({
+            task_id: savedTask.id,
+            resource_id: form.resource_id,
+          });
+
+        if (resourceError) {
+          setMessage(resourceError.message);
+          return;
+        }
+      }
     }
 
     setModalOpen(false);
@@ -296,6 +398,90 @@ export default function Planning({ user }) {
     return task.employee?.name || "Non affecté";
   }
 
+  function addDays(date, days) {
+    const next = new Date(date);
+    next.setDate(next.getDate() + days);
+    return next;
+  }
+
+  function dateDiffDays(start, end) {
+    const startDate = new Date(dateToInputValue(start));
+    const endDate = new Date(dateToInputValue(end));
+    return Math.round((endDate - startDate) / 86400000);
+  }
+
+  function ganttDays() {
+    const start = new Date(robotWeekStart);
+    return Array.from({ length: 21 }, (_, index) => addDays(start, index));
+  }
+
+  function taskStart(task) {
+    return new Date(task.start_date || task.task_date);
+  }
+
+  function taskEnd(task) {
+    return new Date(task.end_date || task.start_date || task.task_date);
+  }
+
+  function ganttTaskStyle(task) {
+    const days = ganttDays();
+    const rangeStart = days[0];
+    const rangeEnd = days[days.length - 1];
+
+    const start = taskStart(task) < rangeStart ? rangeStart : taskStart(task);
+    const end = taskEnd(task) > rangeEnd ? rangeEnd : taskEnd(task);
+
+    const startIndex = Math.max(0, dateDiffDays(rangeStart, start));
+    const duration = Math.max(1, dateDiffDays(start, end) + 1);
+
+    return {
+      gridColumn: `${startIndex + 2} / span ${duration}`,
+      borderTopColor: task.projects ? projectColor(task) : taskColor(task),
+    };
+  }
+
+  async function editTaskDates(task) {
+    const start = window.prompt(
+      "Date début ? AAAA-MM-JJ",
+      task.start_date || task.task_date
+    );
+    if (start === null) return;
+
+    const end = window.prompt(
+      "Date fin ? AAAA-MM-JJ",
+      task.end_date || task.start_date || task.task_date
+    );
+    if (end === null) return;
+
+    const { error } = await supabase
+      .from("production_day_tasks")
+      .update({
+        start_date: start,
+        end_date: end,
+        task_date: start,
+      })
+      .eq("id", task.id);
+
+    if (error) {
+      setMessage(error.message);
+      return;
+    }
+
+    setMessage("Dates Gantt modifiées.");
+    loadData();
+  }
+
+  const ganttProjects = projects
+    .map((project) => ({
+      ...project,
+      tasks: dayTasks
+        .filter((task) => task.project_id === project.id)
+        .sort((a, b) => new Date(taskStart(a)) - new Date(taskStart(b))),
+    }))
+    .filter((project) => project.tasks.length > 0);
+
+  const ganttUnassignedTasks = dayTasks.filter((task) => !task.project_id);
+
   const monthTasks = dayTasks.length;
   const doneTasks = dayTasks.filter((task) => task.status === "done").length;
   const activeTasks = dayTasks.filter((task) => task.status === "in_progress").length;
@@ -335,12 +521,73 @@ export default function Planning({ user }) {
         </div>
       </div>
 
+      <div className="card robot-load-card">
+        <div className="page-head">
+          <div>
+            <h3>Charge robot</h3>
+            <p>
+              Semaine du {robotWeekStart.toLocaleDateString("fr-FR")} —
+              jours bloqués par une tâche affectée au Robot ABB.
+            </p>
+          </div>
+
+          <div className="inline-actions">
+            <button className="btn small" onClick={previousRobotWeek}>← Semaine précédente</button>
+            <button className="btn small" onClick={currentRobotWeek}>Semaine en cours</button>
+            <button className="btn small" onClick={nextRobotWeek}>Semaine suivante →</button>
+          </div>
+        </div>
+
+        <div className="robot-load-grid robot-load-week">
+          {weekDaysFromMonday(robotWeekStart).map((day) => {
+            const tasks = robotTasksForDay(day);
+            const isToday = sameDay(day, new Date());
+
+            return (
+              <div
+                className={[
+                  "robot-day",
+                  tasks.length ? "blocked" : "free",
+                  isToday ? "today" : "",
+                ].join(" ")}
+                key={dateToInputValue(day)}
+              >
+                <strong>
+                  {day.toLocaleDateString("fr-FR", {
+                    weekday: "short",
+                    day: "2-digit",
+                    month: "2-digit",
+                  })}
+                </strong>
+
+                {tasks.length === 0 ? (
+                  <small>Disponible</small>
+                ) : (
+                  <>
+                    <small>{tasks.length} tâche(s) robot</small>
+                    {tasks.slice(0, 4).map((task) => (
+                      <span key={task.id}>
+                        {task.projects?.project_code ? `${task.projects.project_code} · ` : ""}
+                        {task.title}
+                      </span>
+                    ))}
+                  </>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
       <div className="planning-view-switch">
         <button className={viewMode === "calendar" ? "active" : ""} onClick={() => setViewMode("calendar")}>
           📅 Calendrier
         </button>
         <button className={viewMode === "atelier" ? "active" : ""} onClick={() => setViewMode("atelier")}>
           👷 Vue atelier
+        </button>
+        <button className={viewMode === "gantt" ? "active" : ""} onClick={() => setViewMode("gantt")}>
+          📊 Gantt
         </button>
       </div>
 
@@ -411,6 +658,7 @@ export default function Planning({ user }) {
                               <small>
                                 {priorityLabel(task.priority)} · {statusLabel(task.status)}
                               </small>
+                              <small>Ressource : {resourceLabel(task)}</small>
                             </div>
 
                             <div className="production-card-actions">
@@ -472,6 +720,7 @@ export default function Planning({ user }) {
                           <strong>{task.title}</strong>
                           <span>{projectLabel(task)}</span>
                           <small>{task.production_task_types?.name || "Tâche"} · {statusLabel(task.status)}</small>
+                          <small>Ressource : {resourceLabel(task)}</small>
 
                           <div className="production-card-actions">
                             <button onClick={() => updateTaskStatus(task, "in_progress")}>En cours</button>
@@ -521,6 +770,108 @@ export default function Planning({ user }) {
                 );
               })}
             </div>
+          </div>
+        </div>
+      )}
+
+      {viewMode === "gantt" && (
+        <div className="card gantt-card">
+          <div className="page-head">
+            <div>
+              <h3>Gantt production</h3>
+              <p>
+                Vue 3 semaines à partir du {robotWeekStart.toLocaleDateString("fr-FR")}.
+                Modifie les dates d'une tâche pour étirer sa barre.
+              </p>
+            </div>
+
+            <div className="inline-actions">
+              <button className="btn small" onClick={previousRobotWeek}>← 3 semaines avant</button>
+              <button className="btn small" onClick={currentRobotWeek}>Aujourd’hui</button>
+              <button className="btn small" onClick={nextRobotWeek}>3 semaines après →</button>
+            </div>
+          </div>
+
+          <div className="gantt-scroll">
+            <div className="gantt-grid gantt-header-row">
+              <div className="gantt-project-label">Projet / tâche</div>
+              {ganttDays().map((day) => (
+                <div
+                  className={sameDay(day, new Date()) ? "gantt-day today" : "gantt-day"}
+                  key={dateToInputValue(day)}
+                >
+                  <strong>{day.toLocaleDateString("fr-FR", { weekday: "short" })}</strong>
+                  <span>{day.toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit" })}</span>
+                </div>
+              ))}
+            </div>
+
+            {ganttProjects.length === 0 && ganttUnassignedTasks.length === 0 ? (
+              <p>Aucune tâche planifiée pour cette période.</p>
+            ) : (
+              <>
+                {ganttProjects.map((project) => (
+                  <div className="gantt-project-block" key={project.id}>
+                    <div className="gantt-project-title">
+                      <span style={{ background: project.project_color || "#111827" }} />
+                      <strong>
+                        {project.project_code ? `${project.project_code} - ` : ""}
+                        {project.name}
+                      </strong>
+                    </div>
+
+                    {project.tasks.map((task) => (
+                      <div className="gantt-grid gantt-task-row" key={task.id}>
+                        <div className="gantt-task-label">
+                          <strong>{task.title}</strong>
+                          <small>
+                            {task.production_task_types?.name || "Tâche"} · {employeeLabel(task)} · {statusLabel(task.status)}
+                          </small>
+                        </div>
+
+                        <button
+                          className={`gantt-bar task-status-${task.status}`}
+                          style={ganttTaskStyle(task)}
+                          onClick={() => editTaskDates(task)}
+                          title="Cliquer pour modifier les dates"
+                        >
+                          {task.title}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                ))}
+
+                {ganttUnassignedTasks.length > 0 && (
+                  <div className="gantt-project-block">
+                    <div className="gantt-project-title">
+                      <span style={{ background: "#64748b" }} />
+                      <strong>Hors projet</strong>
+                    </div>
+
+                    {ganttUnassignedTasks.map((task) => (
+                      <div className="gantt-grid gantt-task-row" key={task.id}>
+                        <div className="gantt-task-label">
+                          <strong>{task.title}</strong>
+                          <small>
+                            {task.production_task_types?.name || "Tâche"} · {employeeLabel(task)} · {statusLabel(task.status)}
+                          </small>
+                        </div>
+
+                        <button
+                          className={`gantt-bar task-status-${task.status}`}
+                          style={ganttTaskStyle(task)}
+                          onClick={() => editTaskDates(task)}
+                          title="Cliquer pour modifier les dates"
+                        >
+                          {task.title}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
           </div>
         </div>
       )}
@@ -575,6 +926,21 @@ export default function Planning({ user }) {
                   {taskTypes.map((type) => (
                     <option key={type.id} value={type.id}>
                       {type.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label>Ressource principale</label>
+                <select
+                  value={form.resource_id}
+                  onChange={(e) => setForm({ ...form, resource_id: e.target.value })}
+                >
+                  <option value="">Aucune ressource</option>
+                  {resources.map((resource) => (
+                    <option key={resource.id} value={resource.id}>
+                      {resource.name} · {resource.resource_type}
                     </option>
                   ))}
                 </select>

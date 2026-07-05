@@ -7,6 +7,7 @@ import Projets from "./pages/Projets.jsx";
 import Planning from "./pages/Planning.jsx";
 import Stock from "./pages/Stock.jsx";
 import Administration from "./pages/Administration.jsx";
+import Couts from "./pages/Couts.jsx";
 import Sidebar from "./components/Sidebar.jsx";
 import Header from "./components/Header.jsx";
 import { canAccess, loadEmployeePermissions } from "./services/permissions.js";
@@ -19,6 +20,7 @@ const pages = {
   planning: Planning,
   stock: Stock,
   administration: Administration,
+  couts: Couts,
 };
 
 function App() {

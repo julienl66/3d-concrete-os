@@ -7,6 +7,7 @@ export const MODULES = [
   { key: "projets", label: "Projets" },
   { key: "planning", label: "Planning" },
   { key: "stock", label: "Stock" },
+  { key: "couts", label: "Coûts & marges" },
   { key: "administration", label: "Administration" },
 ];
 
@@ -63,17 +64,19 @@ export function defaultPermissions(role = "employee") {
   }
 
   if (role === "direction") {
-    ["dashboard", "projets", "planning", "stock", "pointage"].forEach((key) => {
-      rights[key] = {
-        ...emptyRight(true),
-        can_create: true,
-        can_edit: true,
-        can_validate: key === "projets",
-        can_archive: key === "projets",
-        can_restore: key === "projets",
-        can_export: true,
-      };
-    });
+    ["dashboard", "projets", "planning", "stock", "couts", "pointage"].forEach(
+      (key) => {
+        rights[key] = {
+          ...emptyRight(true),
+          can_create: true,
+          can_edit: true,
+          can_validate: key === "projets",
+          can_archive: key === "projets",
+          can_restore: key === "projets",
+          can_export: true,
+        };
+      }
+    );
   }
 
   if (role === "atelier") {

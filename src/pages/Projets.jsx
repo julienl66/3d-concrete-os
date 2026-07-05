@@ -4,6 +4,10 @@ import { supabase } from "../services/supabase.js";
 export default function Projets({ user, permissions }) {
   const [projects, setProjects] = useState([]);
   const [requests, setRequests] = useState([]);
+  const [workflowTemplates, setWorkflowTemplates] = useState([]);
+  const [workflowSteps, setWorkflowSteps] = useState([]);
+  const [projectTypes, setProjectTypes] = useState([]);
+  const [annexCosts, setAnnexCosts] = useState([]);
   const [selectedProject, setSelectedProject] = useState(null);
   const [projectEvents, setProjectEvents] = useState([]);
   const [projectStock, setProjectStock] = useState([]);
@@ -15,6 +19,14 @@ export default function Projets({ user, permissions }) {
   const [activeTab, setActiveTab] = useState("general");
   const [stockModalOpen, setStockModalOpen] = useState(false);
   const [stockSearch, setStockSearch] = useState("");
+
+  const [annexForm, setAnnexForm] = useState({
+    label: "",
+    category: "Divers",
+    quantity: 1,
+    unit_cost: 0,
+    notes: "",
+  });
   const [stockQuantity, setStockQuantity] = useState(1);
   const [stockSelectedItem, setStockSelectedItem] = useState(null);
   const [selectedDocumentCategory, setSelectedDocumentCategory] = useState("Commercial");
@@ -64,6 +76,56 @@ export default function Projets({ user, permissions }) {
     setProjects(projectsData || []);
     setRequests(requestsData || []);
 
+    const { data: workflowTemplatesData, error: workflowTemplatesError } = await supabase
+      .from("project_workflow_templates")
+      .select("*")
+      .eq("active", true)
+      .order("name");
+
+    if (workflowTemplatesError) {
+      setMessage(workflowTemplatesError.message);
+      return;
+    }
+
+    const { data: workflowStepsData, error: workflowStepsError } = await supabase
+      .from("project_workflow_steps")
+      .select("*")
+      .eq("active", true)
+      .order("step_order", { ascending: true });
+
+    if (workflowStepsError) {
+      setMessage(workflowStepsError.message);
+      return;
+    }
+
+    setWorkflowTemplates(workflowTemplatesData || []);
+    setWorkflowSteps(workflowStepsData || []);
+
+    const { data: projectTypesData, error: projectTypesError } = await supabase
+      .from("project_types")
+      .select("*")
+      .eq("active", true)
+      .order("name");
+
+    if (projectTypesError) {
+      setMessage(projectTypesError.message);
+      return;
+    }
+
+    const { data: annexCostsData, error: annexCostsError } = await supabase
+      .from("project_cost_entries")
+      .select("*")
+      .or("source.eq.manual,source.eq.annex,source.is.null")
+      .order("cost_date", { ascending: false });
+
+    if (annexCostsError) {
+      setMessage(annexCostsError.message);
+      return;
+    }
+
+    setProjectTypes(projectTypesData || []);
+    setAnnexCosts(annexCostsData || []);
+
     const { data: stockItemsData } = await supabase
       .from("stock_items")
       .select("*")
@@ -84,13 +146,13 @@ export default function Projets({ user, permissions }) {
   async function loadProjectDetails(project) {
     const { data: eventsData } = await supabase
       .from("punch_events")
-      .select("*, employees(name)")
+      .select("*, employees(name, hourly_rate)")
       .eq("project_id", project.id)
       .order("event_time", { ascending: true });
 
     const { data: stockData } = await supabase
       .from("stock_movements")
-      .select("*, stock_items(reference, name, unit)")
+      .select("*, stock_items(reference, name, unit, unit_price)")
       .eq("project_id", project.id)
       .order("created_at", { ascending: false });
 
@@ -171,10 +233,83 @@ export default function Projets({ user, permissions }) {
     loadData();
   }
 
+  function findSuggestedWorkflow(request) {
+    const text = `${request.project_name || ""} ${request.description || ""}`.toLowerCase();
+
+    return (
+      workflowTemplates.find((template) =>
+        text.includes((template.name || "").toLowerCase())
+      ) || workflowTemplates[0] || null
+    );
+  }
+
+  async function generateWorkflowTasks(project, templateId, startDate) {
+    if (!templateId) return;
+
+    const steps = workflowSteps
+      .filter((step) => step.template_id === templateId)
+      .sort((a, b) => Number(a.step_order || 0) - Number(b.step_order || 0));
+
+    if (steps.length === 0) return;
+
+    let currentDate = new Date(startDate || new Date().toISOString().slice(0, 10));
+
+    const rows = steps.map((step) => {
+      const taskDate = currentDate.toISOString().slice(0, 10);
+
+      currentDate.setDate(
+        currentDate.getDate() + Number(step.default_duration_days || 1)
+      );
+
+      return {
+        task_date: taskDate,
+        project_id: project.id,
+        task_type_id: step.task_type_id || null,
+        title: step.name,
+        notes: `Généré automatiquement depuis le workflow ${project.name}`,
+        status: "planned",
+        priority: "normal",
+        created_by: user?.id || null,
+      };
+    });
+
+    const { error } = await supabase.from("production_day_tasks").insert(rows);
+
+    if (error) {
+      setMessage(error.message);
+    }
+  }
+
   async function validateRequest(request) {
     if (!hasRight("can_validate")) {
       setMessage("Action non autorisée.");
       return;
+    }
+
+    const suggestedWorkflow = findSuggestedWorkflow(request);
+
+    const workflowList = workflowTemplates
+      .map((template, index) => `${index + 1}. ${template.name}`)
+      .join("\n");
+
+    let selectedWorkflow = suggestedWorkflow;
+
+    if (workflowTemplates.length > 0) {
+      const suggestedIndex = workflowTemplates.findIndex(
+        (template) => template.id === suggestedWorkflow?.id
+      );
+
+      const choice = window.prompt(
+        `Choisis le workflow projet :\n${workflowList}\n\nWorkflow proposé : ${
+          suggestedWorkflow?.name || "aucun"
+        }`,
+        suggestedIndex >= 0 ? String(suggestedIndex + 1) : "1"
+      );
+
+      if (choice === null) return;
+
+      const selectedIndex = Number(choice) - 1;
+      selectedWorkflow = workflowTemplates[selectedIndex] || suggestedWorkflow;
     }
 
     const { data: project, error: projectError } = await supabase
@@ -192,6 +327,8 @@ export default function Projets({ user, permissions }) {
         estimated_hours: 0,
         progress_percent: 0,
         project_color: request.project_color || "#2563eb",
+        workflow_template_id: selectedWorkflow?.id || null,
+        workflow_status: "validated",
       })
       .select()
       .single();
@@ -200,6 +337,12 @@ export default function Projets({ user, permissions }) {
       setMessage(projectError.message);
       return;
     }
+
+    await generateWorkflowTasks(
+      project,
+      selectedWorkflow?.id || null,
+      request.requested_delivery_date || new Date().toISOString().slice(0, 10)
+    );
 
     const { error: updateError } = await supabase
       .from("project_requests")
@@ -290,6 +433,156 @@ export default function Projets({ user, permissions }) {
 
     setMessage("Projet mis à jour.");
     loadData();
+  }
+
+  function projectTypeName(project) {
+    const type = projectTypes.find((item) => item.id === project?.project_type_id);
+    return type?.name || "-";
+  }
+
+  function averageHourlyRate() {
+    const rates = projectEvents
+      .map((event) => Number(event.employees?.hourly_rate || 0))
+      .filter((rate) => rate > 0);
+
+    if (rates.length === 0) return 0;
+
+    return rates.reduce((sum, rate) => sum + rate, 0) / rates.length;
+  }
+
+  function estimatedMaterialCost(project) {
+    return Number(project?.estimated_material_cost || project?.estimated_material_budget || 0);
+  }
+
+  function estimatedLaborHours(project) {
+    return Number(project?.estimated_labor_hours || project?.estimated_hours || 0);
+  }
+
+  function estimatedOtherCost(project) {
+    return Number(project?.estimated_other_cost || 0);
+  }
+
+  function estimatedLaborCost(project) {
+    return estimatedLaborHours(project) * averageHourlyRate();
+  }
+
+  function estimatedTotalCost(project) {
+    return estimatedMaterialCost(project) + estimatedLaborCost(project) + estimatedOtherCost(project);
+  }
+
+  function estimatedMargin(project) {
+    return Number(project?.sale_amount || 0) - estimatedTotalCost(project);
+  }
+
+  function estimatedMarginRate(project) {
+    const saleAmount = Number(project?.sale_amount || 0);
+
+    if (saleAmount <= 0) return 0;
+
+    return (estimatedMargin(project) / saleAmount) * 100;
+  }
+
+  function projectAnnexCosts(project) {
+    return annexCosts.filter((entry) => entry.project_id === project?.id);
+  }
+
+  function projectAnnexTotal(project) {
+    return projectAnnexCosts(project).reduce((sum, entry) => sum + Number(entry.amount || 0), 0);
+  }
+
+  async function changeProjectType(project) {
+    if (!hasRight("can_edit")) {
+      setMessage("Action non autorisée.");
+      return;
+    }
+
+    if (projectTypes.length === 0) {
+      setMessage("Aucun type de projet disponible.");
+      return;
+    }
+
+    const list = projectTypes
+      .map((type, index) => `${index + 1}. ${type.name}`)
+      .join("\\n");
+
+    const choice = window.prompt(`Choisis le type de projet :\\n${list}`, "1");
+    if (choice === null) return;
+
+    const selectedType = projectTypes[Number(choice) - 1];
+
+    if (!selectedType) {
+      setMessage("Type invalide.");
+      return;
+    }
+
+    await updateProject(project, { project_type_id: selectedType.id });
+  }
+
+  async function addAnnexCost(project) {
+    if (!hasRight("can_edit")) {
+      setMessage("Action non autorisée.");
+      return;
+    }
+
+    if (!annexForm.label) {
+      setMessage("Libellé de dépense obligatoire.");
+      return;
+    }
+
+    const quantity = Number(annexForm.quantity || 1);
+    const unitCost = Number(annexForm.unit_cost || 0);
+    const amount = quantity * unitCost;
+
+    const { error } = await supabase.from("project_cost_entries").insert({
+      project_id: project.id,
+      label: annexForm.label,
+      category: annexForm.category || "Divers",
+      quantity,
+      unit_cost: unitCost,
+      amount,
+      source: "annex",
+      notes: annexForm.notes || null,
+      created_by: user?.id || null,
+    });
+
+    if (error) {
+      setMessage(error.message);
+      return;
+    }
+
+    setAnnexForm({
+      label: "",
+      category: "Divers",
+      quantity: 1,
+      unit_cost: 0,
+      notes: "",
+    });
+
+    setMessage("Dépense annexe ajoutée au projet.");
+    await loadData();
+  }
+
+  async function deleteAnnexCost(entry) {
+    if (!hasRight("can_delete")) {
+      setMessage("Action non autorisée.");
+      return;
+    }
+
+    const ok = window.confirm(`Supprimer la dépense "${entry.label}" ?`);
+    if (!ok) return;
+
+    const { error } = await supabase
+      .from("project_cost_entries")
+      .delete()
+      .eq("id", entry.id);
+
+    if (error) {
+      setMessage(error.message);
+      return;
+    }
+
+    setMessage("Dépense supprimée.");
+    await loadData();
   }
 
   async function archiveProject(project) {
@@ -1009,6 +1302,7 @@ export default function Projets({ user, permissions }) {
                   <th>Livrabilité</th>
                   <th>Pose</th>
                   <th>Statut</th>
+                  <th>Workflow proposé</th>
                   {hasRight("can_validate") && <th>Actions</th>}
                 </tr>
               </thead>
@@ -1029,6 +1323,8 @@ export default function Projets({ user, permissions }) {
                         {request.status}
                       </span>
                     </td>
+
+                    <td>{findSuggestedWorkflow(request)?.name || "-"}</td>
 
                     {hasRight("can_validate") && (
                       <td>
@@ -1127,6 +1423,69 @@ export default function Projets({ user, permissions }) {
               <div className="progress-line large">
                 <div style={{ width: `${progress(selectedProject)}%` }} />
               </div>
+            </div>
+          </div>
+
+          <div className="card project-finance-pilot-card">
+            <div className="project-finance-pilot-head">
+              <div>
+                <p className="eyebrow">Pilotage financier</p>
+                <h3>Prévisionnel & marge</h3>
+              </div>
+
+              <div className="inline-actions">
+                <button className="btn small" onClick={() => changeProjectType(selectedProject)}>
+                  Type projet
+                </button>
+                <button className="btn small" onClick={() => promptNumber(selectedProject, "sale_amount", "Montant vendu ?")}>
+                  Vente
+                </button>
+                <button className="btn small" onClick={() => promptNumber(selectedProject, "estimated_material_cost", "Coût matière estimé ?")}>
+                  Matière
+                </button>
+                <button className="btn small" onClick={() => promptNumber(selectedProject, "estimated_labor_hours", "Heures prévues ?")}>
+                  Heures
+                </button>
+                <button className="btn small" onClick={() => promptNumber(selectedProject, "estimated_other_cost", "Autres coûts estimés ?")}>
+                  Autres coûts
+                </button>
+              </div>
+            </div>
+
+            <div className="project-finance-kpis">
+              <div>
+                <span>Type</span>
+                <strong>{projectTypeName(selectedProject)}</strong>
+              </div>
+
+              <div>
+                <span>Vente</span>
+                <strong>{formatMoney(selectedProject.sale_amount)}</strong>
+              </div>
+
+              <div>
+                <span>Coût estimé</span>
+                <strong>{formatMoney(estimatedTotalCost(selectedProject))}</strong>
+              </div>
+
+              <div>
+                <span>Marge estimée</span>
+                <strong>{formatMoney(estimatedMargin(selectedProject))}</strong>
+              </div>
+
+              <div className={estimatedMarginRate(selectedProject) >= 35 ? "good" : "warning"}>
+                <span>Taux marge</span>
+                <strong>{estimatedMarginRate(selectedProject).toFixed(1)} %</strong>
+              </div>
+            </div>
+
+            <div className="project-finance-detail-line">
+              <span>Matière : <strong>{formatMoney(estimatedMaterialCost(selectedProject))}</strong></span>
+              <span>Heures prévues : <strong>{estimatedLaborHours(selectedProject).toFixed(2)} h</strong></span>
+              <span>Taux moyen : <strong>{formatMoney(averageHourlyRate())}/h</strong></span>
+              <span>MO estimée : <strong>{formatMoney(estimatedLaborCost(selectedProject))}</strong></span>
+              <span>Autres coûts : <strong>{formatMoney(estimatedOtherCost(selectedProject))}</strong></span>
+              <span>Annexes réelles : <strong>{formatMoney(projectAnnexTotal(selectedProject))}</strong></span>
             </div>
           </div>
 
@@ -1549,17 +1908,137 @@ export default function Projets({ user, permissions }) {
           )}
 
           {activeTab === "financier" && (
-            <div className="card">
-              <h3>Financier</h3>
-              <p><strong>Montant vendu :</strong> {formatMoney(selectedProject.sale_amount)}</p>
-              <p><strong>Budget matière :</strong> {formatMoney(selectedProject.estimated_material_budget)}</p>
-              <p><strong>Budget main-d'œuvre :</strong> {formatMoney(selectedProject.estimated_labor_budget)}</p>
+            <div className="project-detail-grid">
+              <div className="card">
+                <h3>Prévisionnel projet</h3>
 
-              <div className="inline-actions">
-                <button className="btn small" onClick={() => promptNumber(selectedProject, "sale_amount", "Montant vendu ?")}>Vente</button>
-                <button className="btn small" onClick={() => promptNumber(selectedProject, "estimated_material_budget", "Budget matière ?")}>Budget matière</button>
-                <button className="btn small" onClick={() => promptNumber(selectedProject, "estimated_labor_budget", "Budget main-d'œuvre ?")}>Budget MO</button>
-                <button className="btn small" onClick={() => promptNumber(selectedProject, "estimated_hours", "Temps estimé en heures ?")}>Temps estimé</button>
+                <div className="financial-summary-grid">
+                  <div>
+                    <span>Type de projet</span>
+                    <strong>{projectTypeName(selectedProject)}</strong>
+                  </div>
+
+                  <div>
+                    <span>Montant vendu</span>
+                    <strong>{formatMoney(selectedProject.sale_amount)}</strong>
+                  </div>
+
+                  <div>
+                    <span>Coût estimé</span>
+                    <strong>{formatMoney(estimatedTotalCost(selectedProject))}</strong>
+                  </div>
+
+                  <div>
+                    <span>Marge estimée</span>
+                    <strong>{formatMoney(estimatedMargin(selectedProject))}</strong>
+                  </div>
+
+                  <div>
+                    <span>Taux marge estimé</span>
+                    <strong>{estimatedMarginRate(selectedProject).toFixed(1)} %</strong>
+                  </div>
+                </div>
+
+                <div className="financial-breakdown">
+                  <p><strong>Matière estimée :</strong> {formatMoney(estimatedMaterialCost(selectedProject))}</p>
+                  <p><strong>Heures prévues :</strong> {estimatedLaborHours(selectedProject).toFixed(2)} h</p>
+                  <p><strong>Taux horaire moyen :</strong> {formatMoney(averageHourlyRate())}/h</p>
+                  <p><strong>Main-d'œuvre estimée :</strong> {formatMoney(estimatedLaborCost(selectedProject))}</p>
+                  <p><strong>Autres coûts estimés :</strong> {formatMoney(estimatedOtherCost(selectedProject))}</p>
+                  <p><strong>Dépenses annexes réelles :</strong> {formatMoney(projectAnnexTotal(selectedProject))}</p>
+                </div>
+
+                <div className="inline-actions">
+                  <button className="btn small" onClick={() => changeProjectType(selectedProject)}>Type projet</button>
+                  <button className="btn small" onClick={() => promptNumber(selectedProject, "sale_amount", "Montant vendu ?")}>Vente</button>
+                  <button className="btn small" onClick={() => promptNumber(selectedProject, "estimated_material_cost", "Coût matière estimé ?")}>Matière estimée</button>
+                  <button className="btn small" onClick={() => promptNumber(selectedProject, "estimated_labor_hours", "Heures prévues ?")}>Heures prévues</button>
+                  <button className="btn small" onClick={() => promptNumber(selectedProject, "estimated_other_cost", "Autres coûts estimés ?")}>Autres coûts</button>
+                </div>
+              </div>
+
+              <div className="card">
+                <h3>Dépenses annexes</h3>
+                <p>Palette, petit matériel, ferraillage, achat spécifique, sous-traitance ponctuelle.</p>
+
+                <div className="annex-cost-form">
+                  <input
+                    value={annexForm.label}
+                    onChange={(e) => setAnnexForm({ ...annexForm, label: e.target.value })}
+                    placeholder="Libellé"
+                  />
+
+                  <input
+                    value={annexForm.category}
+                    onChange={(e) => setAnnexForm({ ...annexForm, category: e.target.value })}
+                    placeholder="Catégorie"
+                  />
+
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={annexForm.quantity}
+                    onChange={(e) => setAnnexForm({ ...annexForm, quantity: e.target.value })}
+                    placeholder="Qté"
+                  />
+
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={annexForm.unit_cost}
+                    onChange={(e) => setAnnexForm({ ...annexForm, unit_cost: e.target.value })}
+                    placeholder="PU"
+                  />
+
+                  <input
+                    value={annexForm.notes}
+                    onChange={(e) => setAnnexForm({ ...annexForm, notes: e.target.value })}
+                    placeholder="Notes"
+                  />
+
+                  <button className="btn primary" onClick={() => addAnnexCost(selectedProject)}>
+                    Ajouter
+                  </button>
+                </div>
+
+                {projectAnnexCosts(selectedProject).length === 0 ? (
+                  <p>Aucune dépense annexe.</p>
+                ) : (
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Date</th>
+                        <th>Catégorie</th>
+                        <th>Libellé</th>
+                        <th>Montant</th>
+                        <th>Actions</th>
+                      </tr>
+                    </thead>
+
+                    <tbody>
+                      {projectAnnexCosts(selectedProject).map((entry) => (
+                        <tr key={entry.id}>
+                          <td>{entry.cost_date || "-"}</td>
+                          <td>{entry.category || "-"}</td>
+                          <td>
+                            <strong>{entry.label}</strong>
+                            <br />
+                            <small>
+                              {Number(entry.quantity || 0).toLocaleString("fr-FR")} × {formatMoney(entry.unit_cost)}
+                              {entry.notes ? ` · ${entry.notes}` : ""}
+                            </small>
+                          </td>
+                          <td>{formatMoney(entry.amount)}</td>
+                          <td>
+                            <button className="btn small danger-soft" onClick={() => deleteAnnexCost(entry)}>
+                              Supprimer
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
               </div>
             </div>
           )}

@@ -11,6 +11,13 @@ export default function Dashboard({ user }) {
   const [revenueEntries, setRevenueEntries] = useState([]);
   const [message, setMessage] = useState("");
   const [tab, setTab] = useState("notifications");
+  const [acknowledgedAutoNotifications, setAcknowledgedAutoNotifications] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem("acknowledged_auto_notifications") || "[]");
+    } catch {
+      return [];
+    }
+  });
   const [notificationCategory, setNotificationCategory] = useState("stock");
   const [now, setNow] = useState(new Date());
   const [selectedRevenueYear, setSelectedRevenueYear] = useState(new Date().getFullYear());
@@ -261,6 +268,23 @@ export default function Dashboard({ user }) {
     loadDashboard();
   }
 
+  function acknowledgeAutomaticNotification(notification) {
+    const nextAcknowledged = Array.from(
+      new Set([...acknowledgedAutoNotifications, notification.id])
+    );
+
+    setAcknowledgedAutoNotifications(nextAcknowledged);
+    localStorage.setItem(
+      "acknowledged_auto_notifications",
+      JSON.stringify(nextAcknowledged)
+    );
+  }
+
+  function resetAcknowledgedAutomaticNotifications() {
+    setAcknowledgedAutoNotifications([]);
+    localStorage.removeItem("acknowledged_auto_notifications");
+  }
+
   async function generateAutomaticNotifications() {
     const lowStockItems = stockItems.filter((item) => {
       const current = Number(item.current_quantity || 0);
@@ -403,18 +427,26 @@ export default function Dashboard({ user }) {
     })),
   ];
 
-  const allNotifications = [...liveAutomaticNotifications, ...notifications];
-  const stockNotifications = liveAutomaticNotifications.filter((notification) =>
+  const liveAutomaticNotificationsWithState = liveAutomaticNotifications.map((notification) => ({
+    ...notification,
+    is_acknowledged: acknowledgedAutoNotifications.includes(notification.id),
+  }));
+
+  const allNotifications = [...liveAutomaticNotificationsWithState, ...notifications];
+  const stockNotifications = liveAutomaticNotificationsWithState.filter((notification) =>
     notification.id.startsWith("auto-stock-")
   );
 
-  const lateNotifications = liveAutomaticNotifications.filter(
+  const lateNotifications = liveAutomaticNotificationsWithState.filter(
     (notification) =>
       notification.id.startsWith("auto-prod-") ||
       notification.id.startsWith("auto-pose-")
   );
 
   const savedNotifications = notifications.filter((notification) => !notification.is_read);
+
+  const stockNewCount = stockNotifications.filter((notification) => !notification.is_acknowledged).length;
+  const lateNewCount = lateNotifications.filter((notification) => !notification.is_acknowledged).length;
 
   const notificationGroups = [
     {
@@ -424,7 +456,7 @@ export default function Dashboard({ user }) {
       level: stockNotifications.length ? "danger" : "success",
       count: stockNotifications.length,
       description: stockNotifications.length
-        ? `${stockNotifications.length} article(s) sous le minimum`
+        ? `${stockNotifications.length} critique(s) · ${stockNewCount} nouvelle(s)`
         : "Aucun stock critique",
       items: stockNotifications,
     },
@@ -435,7 +467,7 @@ export default function Dashboard({ user }) {
       level: lateNotifications.length ? "danger" : "success",
       count: lateNotifications.length,
       description: lateNotifications.length
-        ? "Production ou pose en retard"
+        ? `${lateNotifications.length} retard(s) · ${lateNewCount} nouveau(x)`
         : "Aucun retard détecté",
       items: lateNotifications,
     },
@@ -491,7 +523,9 @@ export default function Dashboard({ user }) {
     return Math.min(100, Math.round((ms / targetMs) * 100));
   }
 
-  const unreadNotifications = allNotifications.filter((notification) => !notification.is_read);
+  const unreadNotifications = allNotifications.filter((notification) =>
+    notification.automatic ? !notification.is_acknowledged : !notification.is_read
+  );
   const criticalNotifications = unreadNotifications.filter((notification) =>
     ["critical", "danger"].includes(notification.level)
   );
@@ -750,7 +784,16 @@ export default function Dashboard({ user }) {
 
       {tab === "notifications" && (
         <div className="card">
-          <h3>Notifications</h3>
+          <div className="page-head">
+            <div>
+              <h3>Notifications</h3>
+              <p>Les alertes automatiques restent visibles tant que la cause existe.</p>
+            </div>
+
+            <button className="btn small" onClick={resetAcknowledgedAutomaticNotifications}>
+              Réinitialiser prises en compte
+            </button>
+          </div>
 
           <div className="notification-category-grid">
             {notificationGroups.map((group) => (
@@ -785,19 +828,31 @@ export default function Dashboard({ user }) {
               <div className="erp-notification-list">
                 {selectedNotificationGroup.items.map((notification) => (
                   <div
-                    className={`erp-notification ${notification.level || "info"} ${notification.is_read ? "read" : ""}`}
+                    className={`erp-notification ${notification.level || "info"} ${notification.is_read || notification.is_acknowledged ? "read" : ""}`}
                     key={notification.id}
                   >
                     <div>
                       <span>{levelLabel(notification.level)}</span>
                       <strong>{notification.title}</strong>
                       <p>{notification.message || "-"}</p>
-                      <small>{notification.automatic ? "Alerte automatique" : formatDateTime(notification.created_at)}</small>
+                      <small>
+                        {notification.automatic
+                          ? notification.is_acknowledged
+                            ? "Alerte automatique · prise en compte"
+                            : "Alerte automatique · nouvelle"
+                          : formatDateTime(notification.created_at)}
+                      </small>
                     </div>
 
                     <div className="inline-actions">
                       {notification.automatic ? (
-                        <span className="auto-notification-label">Auto</span>
+                        notification.is_acknowledged ? (
+                          <span className="auto-notification-label">Pris en compte</span>
+                        ) : (
+                          <button className="btn small" onClick={() => acknowledgeAutomaticNotification(notification)}>
+                            Pris en compte
+                          </button>
+                        )
                       ) : (
                         <>
                           {!notification.is_read && (

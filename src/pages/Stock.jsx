@@ -1,154 +1,123 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../services/supabase.js";
+
+const PRICE_UNITS = [
+  { value: "unit", label: "€/unité" },
+  { value: "kg", label: "€/kg" },
+  { value: "tonne", label: "€/tonne" },
+  { value: "liter", label: "€/litre" },
+  { value: "meter", label: "€/mètre" },
+  { value: "m2", label: "€/m²" },
+  { value: "m3", label: "€/m³" },
+];
 
 export default function Stock({ user }) {
   const [items, setItems] = useState([]);
   const [projects, setProjects] = useState([]);
-  const [categories, setCategories] = useState([]);
   const [message, setMessage] = useState("");
   const [search, setSearch] = useState("");
-  const [selectedCategory, setSelectedCategory] = useState("all");
 
   const [form, setForm] = useState({
     reference: "",
     name: "",
-    category_id: "",
-    unit: "unité",
+    category: "Matière première",
+    unit: "kg",
+    current_quantity: 0,
     minimum_quantity: 0,
+    unit_price: 0,
+    price_unit: "kg",
   });
 
   useEffect(() => {
-    loadAll();
+    loadData();
   }, []);
 
-  async function loadAll() {
-    await Promise.all([loadStock(), loadProjects(), loadCategories()]);
-  }
-
-  async function loadStock() {
-    const { data, error } = await supabase
-      .from("stock_items")
-      .select("*, stock_categories(name)")
-      .eq("active", true)
-      .order("name");
-
-    if (error) {
-      setMessage(error.message);
-      return;
-    }
-
-    setItems(data || []);
-  }
-
-  async function loadProjects() {
-    const { data } = await supabase
-      .from("projects")
-      .select("*")
-      .eq("active", true)
-      .order("name");
-
-    setProjects(data || []);
-  }
-
-  async function loadCategories() {
-    const { data, error } = await supabase
-      .from("stock_categories")
-      .select("*")
-      .eq("active", true)
-      .order("name");
-
-    if (error) {
-      setMessage(error.message);
-      return;
-    }
-
-    setCategories(data || []);
-
-    if (data?.length && !form.category_id) {
-      setForm((current) => ({
-        ...current,
-        category_id: data[0].id,
-      }));
-    }
-  }
-
-  async function createCategory() {
-    const name = window.prompt("Nom de la nouvelle sous-catégorie ?");
-
-    if (!name) return;
-
-    const { error } = await supabase.from("stock_categories").insert({
-      name,
-      active: true,
-    });
-
-    if (error) {
-      setMessage(error.message);
-      return;
-    }
-
-    setMessage("Sous-catégorie ajoutée.");
-    await loadCategories();
-  }
-
-  async function deleteCategory(category) {
-    const linkedItems = items.filter((item) => item.category_id === category.id).length;
-
-    const ok = window.confirm(
-      linkedItems > 0
-        ? `Supprimer la sous-catégorie "${category.name}" ? ${linkedItems} article(s) seront mis sans sous-catégorie.`
-        : `Supprimer la sous-catégorie "${category.name}" ?`
-    );
-
-    if (!ok) return;
-
-    if (linkedItems > 0) {
-      const { error: unlinkError } = await supabase
+  async function loadData() {
+    const [itemsResponse, projectsResponse] = await Promise.all([
+      supabase
         .from("stock_items")
-        .update({ category_id: null })
-        .eq("category_id", category.id);
+        .select("*")
+        .eq("active", true)
+        .order("category")
+        .order("name"),
+      supabase
+        .from("projects")
+        .select("*")
+        .eq("active", true)
+        .order("name"),
+    ]);
 
-      if (unlinkError) {
-        setMessage(unlinkError.message);
-        return;
-      }
-    }
-
-    const { error } = await supabase
-      .from("stock_categories")
-      .update({ active: false })
-      .eq("id", category.id);
+    const error = itemsResponse.error || projectsResponse.error;
 
     if (error) {
       setMessage(error.message);
       return;
     }
 
-    if (selectedCategory === category.id) {
-      setSelectedCategory("all");
-    }
-
-    setMessage("Sous-catégorie supprimée.");
-    await loadAll();
+    setItems(itemsResponse.data || []);
+    setProjects(projectsResponse.data || []);
   }
+
+  function formatMoney(value) {
+    return `${Number(value || 0).toLocaleString("fr-FR", {
+      maximumFractionDigits: 2,
+    })} €`;
+  }
+
+  function priceUnitLabel(value) {
+    return PRICE_UNITS.find((item) => item.value === value)?.label || "€/unité";
+  }
+
+  function normalizedUnitCost(item) {
+    const price = Number(item.unit_price || 0);
+
+    if (item.price_unit === "tonne") return price / 1000;
+
+    return price;
+  }
+
+  function stockValue(item) {
+    return Number(item.current_quantity || 0) * normalizedUnitCost(item);
+  }
+
+  const filteredItems = useMemo(() => {
+    const query = search.toLowerCase();
+
+    return items.filter((item) => {
+      return (
+        (item.reference || "").toLowerCase().includes(query) ||
+        (item.name || "").toLowerCase().includes(query) ||
+        (item.category || "").toLowerCase().includes(query)
+      );
+    });
+  }, [items, search]);
+
+  const criticalItems = items.filter((item) => {
+    const current = Number(item.current_quantity || 0);
+    const minimum = Number(item.minimum_quantity || 0);
+
+    return minimum > 0 && current <= minimum;
+  });
+
+  const totalValue = items.reduce((sum, item) => sum + stockValue(item), 0);
 
   async function createItem(e) {
     e.preventDefault();
-    setMessage("");
 
     if (!form.name) {
-      setMessage("Désignation obligatoire.");
+      setMessage("Nom obligatoire.");
       return;
     }
 
     const { error } = await supabase.from("stock_items").insert({
       reference: form.reference || null,
       name: form.name,
-      category: "Stock",
-      category_id: form.category_id || null,
-      unit: form.unit,
+      category: form.category || "Matière première",
+      unit: form.unit || "kg",
+      current_quantity: Number(form.current_quantity || 0),
       minimum_quantity: Number(form.minimum_quantity || 0),
-      current_quantity: 0,
+      unit_price: Number(form.unit_price || 0),
+      price_unit: form.price_unit || "kg",
       active: true,
     });
 
@@ -160,21 +129,53 @@ export default function Stock({ user }) {
     setForm({
       reference: "",
       name: "",
-      category_id: form.category_id,
-      unit: "unité",
+      category: "Matière première",
+      unit: "kg",
+      current_quantity: 0,
       minimum_quantity: 0,
+      unit_price: 0,
+      price_unit: "kg",
     });
 
     setMessage("Article ajouté.");
-    await loadStock();
+    loadData();
+  }
+
+  function askProjectId() {
+    if (projects.length === 0) return "";
+
+    const list = projects
+      .map((project, index) => `${index + 1}. ${project.project_code ? `${project.project_code} - ` : ""}${project.name}`)
+      .join("\n");
+
+    const choice = window.prompt(
+      `Projet lié à la sortie ?\nLaisse vide si aucun projet.\n\n${list}`,
+      ""
+    );
+
+    if (!choice) return "";
+
+    const selectedProject = projects[Number(choice) - 1];
+
+    return selectedProject?.id || "";
   }
 
   async function moveStock(item, type) {
-    const qty = Number(
-      window.prompt(`Quantité à ${type === "in" ? "ajouter" : "sortir"} ?`)
+    const value = window.prompt(
+      type === "in" ? "Quantité à entrer ?" : "Quantité à sortir ?",
+      "1"
     );
 
-    if (!qty || qty <= 0) return;
+    if (value === null) return;
+
+    const qty = Number(String(value).replace(",", "."));
+
+    if (!qty || Number.isNaN(qty) || qty <= 0) {
+      setMessage("Quantité invalide.");
+      return;
+    }
+
+    const projectId = type === "out" ? askProjectId() : "";
 
     const newQuantity =
       type === "in"
@@ -191,29 +192,39 @@ export default function Stock({ user }) {
       return;
     }
 
-    await supabase.from("stock_movements").insert({
+    const { error: movementError } = await supabase.from("stock_movements").insert({
       item_id: item.id,
-      project_id: null,
+      project_id: projectId || null,
       movement_type: type,
       quantity: qty,
       comment: type === "in" ? "Entrée stock" : "Sortie stock",
       created_by: user?.id || null,
     });
 
+    if (movementError) {
+      setMessage(movementError.message);
+      return;
+    }
+
     setMessage("Stock mis à jour.");
-    await loadStock();
+    loadData();
   }
 
   async function editQuantity(item) {
-    const value = Number(
-      window.prompt("Nouvelle quantité actuelle ?", item.current_quantity)
-    );
+    const value = window.prompt("Nouvelle quantité actuelle ?", item.current_quantity);
 
-    if (Number.isNaN(value)) return;
+    if (value === null) return;
+
+    const quantity = Number(String(value).replace(",", "."));
+
+    if (Number.isNaN(quantity)) {
+      setMessage("Quantité invalide.");
+      return;
+    }
 
     const { error } = await supabase
       .from("stock_items")
-      .update({ current_quantity: value })
+      .update({ current_quantity: quantity })
       .eq("id", item.id);
 
     if (error) {
@@ -221,29 +232,25 @@ export default function Stock({ user }) {
       return;
     }
 
-    await supabase.from("stock_movements").insert({
-      item_id: item.id,
-      project_id: null,
-      movement_type: "adjustment",
-      quantity: value,
-      comment: "Ajustement manuel quantité",
-      created_by: user?.id || null,
-    });
-
     setMessage("Quantité modifiée.");
-    await loadStock();
+    loadData();
   }
 
   async function editMinimum(item) {
-    const value = Number(
-      window.prompt("Nouveau stock mini ?", item.minimum_quantity)
-    );
+    const value = window.prompt("Nouveau stock mini ?", item.minimum_quantity);
 
-    if (Number.isNaN(value)) return;
+    if (value === null) return;
+
+    const quantity = Number(String(value).replace(",", "."));
+
+    if (Number.isNaN(quantity)) {
+      setMessage("Stock mini invalide.");
+      return;
+    }
 
     const { error } = await supabase
       .from("stock_items")
-      .update({ minimum_quantity: value })
+      .update({ minimum_quantity: quantity })
       .eq("id", item.id);
 
     if (error) {
@@ -252,60 +259,51 @@ export default function Stock({ user }) {
     }
 
     setMessage("Stock mini modifié.");
-    await loadStock();
+    loadData();
   }
 
-  async function editReference(item) {
-    const value = window.prompt("Nouvelle référence ?", item.reference || "");
-
-    if (value === null) return;
-
-    const { error } = await supabase
-      .from("stock_items")
-      .update({ reference: value || null })
-      .eq("id", item.id);
-
-    if (error) {
-      setMessage(error.message);
-      return;
-    }
-
-    setMessage("Référence modifiée.");
-    await loadStock();
-  }
-
-  async function editSubCategory(item) {
-    if (!categories.length) {
-      setMessage("Aucune sous-catégorie disponible.");
-      return;
-    }
-
-    const list = categories.map((cat, index) => `${index + 1}. ${cat.name}`).join("\n");
-    const choice = Number(window.prompt(`Choisis une sous-catégorie :\n${list}`));
-
-    if (!choice || choice < 1 || choice > categories.length) return;
-
-    const selected = categories[choice - 1];
-
-    const { error } = await supabase
-      .from("stock_items")
-      .update({ category_id: selected.id })
-      .eq("id", item.id);
-
-    if (error) {
-      setMessage(error.message);
-      return;
-    }
-
-    setMessage("Sous-catégorie modifiée.");
-    await loadStock();
-  }
-
-  async function deleteItem(item) {
-    const ok = window.confirm(
-      `Retirer l'article "${item.reference || ""} ${item.name}" de l'inventaire ?`
+  async function editPrice(item) {
+    const price = window.prompt(
+      "Prix d'achat ? Exemple : 180 pour 180 €/tonne",
+      String(item.unit_price || 0)
     );
 
+    if (price === null) return;
+
+    const list = PRICE_UNITS.map((unit, index) => `${index + 1}. ${unit.label}`).join("\n");
+    const currentIndex = Math.max(
+      0,
+      PRICE_UNITS.findIndex((unit) => unit.value === item.price_unit)
+    );
+
+    const choice = window.prompt(
+      `Unité du prix :\n${list}`,
+      String(currentIndex + 1)
+    );
+
+    if (choice === null) return;
+
+    const selectedUnit = PRICE_UNITS[Number(choice) - 1] || PRICE_UNITS[0];
+
+    const { error } = await supabase
+      .from("stock_items")
+      .update({
+        unit_price: Number(String(price).replace(",", ".")) || 0,
+        price_unit: selectedUnit.value,
+      })
+      .eq("id", item.id);
+
+    if (error) {
+      setMessage(error.message);
+      return;
+    }
+
+    setMessage("Prix matière modifié.");
+    loadData();
+  }
+
+  async function archiveItem(item) {
+    const ok = window.confirm(`Archiver "${item.name}" ?`);
     if (!ok) return;
 
     const { error } = await supabase
@@ -318,75 +316,37 @@ export default function Stock({ user }) {
       return;
     }
 
-    setMessage("Article retiré de l'inventaire.");
-    await loadStock();
+    setMessage("Article archivé.");
+    loadData();
   }
-
-  const criticalItems = items.filter((item) => {
-    const current = Number(item.current_quantity || 0);
-    const minimum = Number(item.minimum_quantity || 0);
-
-    return minimum > 0 && current < minimum;
-  });
-
-  const filteredItems = items.filter((item) => {
-    const query = search.toLowerCase();
-
-    const matchesSearch =
-      (item.reference || "").toLowerCase().includes(query) ||
-      (item.name || "").toLowerCase().includes(query) ||
-      (item.stock_categories?.name || "").toLowerCase().includes(query);
-
-    const matchesCategory =
-      selectedCategory === "all" || item.category_id === selectedCategory;
-
-    return matchesSearch && matchesCategory;
-  });
 
   function exportMissingProducts() {
     const rows = [
-      [
-        "Référence",
-        "Désignation",
-        "Sous-catégorie",
-        "Stock actuel",
-        "Stock mini",
-        "Quantité à commander",
-        "Unité",
-      ],
-      ...criticalItems.map((item) => {
-        const current = Number(item.current_quantity || 0);
-        const minimum = Number(item.minimum_quantity || 0);
-
-        return [
-          item.reference || "",
-          item.name || "",
-          item.stock_categories?.name || "",
-          current,
-          minimum,
-          Math.max(0, minimum - current),
-          item.unit || "",
-        ];
-      }),
+      ["Référence", "Désignation", "Catégorie", "Stock actuel", "Stock mini", "Unité", "Prix achat", "Unité prix"],
+      ...criticalItems.map((item) => [
+        item.reference || "",
+        item.name || "",
+        item.category || "",
+        item.current_quantity || 0,
+        item.minimum_quantity || 0,
+        item.unit || "",
+        item.unit_price || 0,
+        priceUnitLabel(item.price_unit),
+      ]),
     ];
 
     const csv = rows
       .map((row) =>
-        row
-          .map((cell) => `"${String(cell).replace(/"/g, '""')}"`)
-          .join(";")
+        row.map((cell) => `"${String(cell ?? "").replaceAll('"', '""')}"`).join(";")
       )
       .join("\n");
 
-    const blob = new Blob([csv], {
-      type: "text/csv;charset=utf-8;",
-    });
-
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
-
     const link = document.createElement("a");
+
     link.href = url;
-    link.download = "produits-manquants.csv";
+    link.download = "stock_articles_critiques.csv";
     link.click();
 
     URL.revokeObjectURL(url);
@@ -397,112 +357,80 @@ export default function Stock({ user }) {
       <div className="page-head">
         <div>
           <p className="eyebrow">Stock</p>
-          <h2>Gestion simple du stock</h2>
-          <p>Articles classés uniquement par sous-catégories.</p>
+          <h2>Stock & matières</h2>
+          <p>Gère les quantités, seuils d'alerte et prix matière pour le coût de revient.</p>
         </div>
+
+        <button className="btn primary" onClick={exportMissingProducts}>
+          Export produits manquants
+        </button>
       </div>
 
       {message && <div className="alert info">{message}</div>}
 
       <div className="stats-grid">
         <div className="stat-card">
-          <span>Articles</span>
+          <span>Articles actifs</span>
           <strong>{items.length}</strong>
         </div>
 
         <div className="stat-card accent">
-          <span>Alertes stock mini</span>
+          <span>Stock critique</span>
           <strong>{criticalItems.length}</strong>
         </div>
 
         <div className="stat-card">
-          <span>Projets actifs</span>
-          <strong>{projects.length}</strong>
-        </div>
-      </div>
-
-      <div className="card">
-        <h3>Sous-catégories</h3>
-
-        <div className="category-tabs">
-          <button
-            className={selectedCategory === "all" ? "active" : ""}
-            onClick={() => setSelectedCategory("all")}
-          >
-            Toutes
-          </button>
-
-          {categories.map((category) => (
-            <div className="category-tab" key={category.id}>
-              <button
-                className={selectedCategory === category.id ? "active" : ""}
-                onClick={() => setSelectedCategory(category.id)}
-              >
-                {category.name}
-              </button>
-
-              <button
-                className="category-delete"
-                onClick={() => deleteCategory(category)}
-                title="Supprimer la sous-catégorie"
-              >
-                ×
-              </button>
-            </div>
-          ))}
-
-          <button className="add-tab" onClick={createCategory}>
-            + Ajouter
-          </button>
+          <span>Valeur stock estimée</span>
+          <strong>{formatMoney(totalValue)}</strong>
         </div>
       </div>
 
       <div className="card">
         <h3>Ajouter un article</h3>
 
-        <form onSubmit={createItem} className="grid">
+        <form className="grid" onSubmit={createItem}>
           <div>
             <label>Référence</label>
             <input
-              placeholder="Ex : X-0001"
               value={form.reference}
-              onChange={(e) =>
-                setForm({ ...form, reference: e.target.value })
-              }
+              onChange={(e) => setForm({ ...form, reference: e.target.value })}
+              placeholder="Ex : CIM-GRIS"
             />
           </div>
 
           <div>
             <label>Désignation</label>
             <input
-              placeholder="Ex : Ciment, buse, durite..."
               value={form.name}
               onChange={(e) => setForm({ ...form, name: e.target.value })}
+              placeholder="Ex : Ciment gris"
             />
           </div>
 
           <div>
-            <label>Sous-catégorie</label>
-            <select
-              value={form.category_id}
-              onChange={(e) =>
-                setForm({ ...form, category_id: e.target.value })
-              }
-            >
-              <option value="">Sans sous-catégorie</option>
-              {categories.map((category) => (
-                <option key={category.id} value={category.id}>
-                  {category.name}
-                </option>
-              ))}
-            </select>
+            <label>Catégorie</label>
+            <input
+              value={form.category}
+              onChange={(e) => setForm({ ...form, category: e.target.value })}
+            />
           </div>
 
           <div>
-            <label>Unité</label>
+            <label>Unité de stock</label>
             <input
               value={form.unit}
               onChange={(e) => setForm({ ...form, unit: e.target.value })}
+              placeholder="kg, unité, litre..."
+            />
+          </div>
+
+          <div>
+            <label>Quantité actuelle</label>
+            <input
+              type="number"
+              step="0.01"
+              value={form.current_quantity}
+              onChange={(e) => setForm({ ...form, current_quantity: e.target.value })}
             />
           </div>
 
@@ -510,11 +438,34 @@ export default function Stock({ user }) {
             <label>Stock mini</label>
             <input
               type="number"
+              step="0.01"
               value={form.minimum_quantity}
-              onChange={(e) =>
-                setForm({ ...form, minimum_quantity: e.target.value })
-              }
+              onChange={(e) => setForm({ ...form, minimum_quantity: e.target.value })}
             />
+          </div>
+
+          <div>
+            <label>Prix d'achat</label>
+            <input
+              type="number"
+              step="0.01"
+              value={form.unit_price}
+              onChange={(e) => setForm({ ...form, unit_price: e.target.value })}
+            />
+          </div>
+
+          <div>
+            <label>Unité du prix</label>
+            <select
+              value={form.price_unit}
+              onChange={(e) => setForm({ ...form, price_unit: e.target.value })}
+            >
+              {PRICE_UNITS.map((unit) => (
+                <option key={unit.value} value={unit.value}>
+                  {unit.label}
+                </option>
+              ))}
+            </select>
           </div>
 
           <div className="align-end">
@@ -528,118 +479,109 @@ export default function Stock({ user }) {
 
         <div className="stock-toolbar">
           <input
-            placeholder="Rechercher par référence, désignation ou sous-catégorie..."
+            placeholder="Rechercher par référence, désignation ou catégorie..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
-
-          <button className="btn primary" onClick={exportMissingProducts}>
-            Export manquants
-          </button>
         </div>
 
-        <table>
-          <thead>
-            <tr>
-              <th>Référence</th>
-              <th>Désignation</th>
-              <th>Sous-catégorie</th>
-              <th>Stock</th>
-              <th>Mini</th>
-              <th>Alerte</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
+        {filteredItems.length === 0 ? (
+          <p>Aucun article trouvé.</p>
+        ) : (
+          <table>
+            <thead>
+              <tr>
+                <th>Référence</th>
+                <th>Désignation</th>
+                <th>Catégorie</th>
+                <th>Stock</th>
+                <th>Mini</th>
+                <th>Prix</th>
+                <th>Valeur</th>
+                <th>Alerte</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
 
-          <tbody>
-            {filteredItems.map((item) => {
-              const current = Number(item.current_quantity || 0);
-              const minimum = Number(item.minimum_quantity || 0);
-             const isCritical = minimum > 0 && current < minimum;
+            <tbody>
+              {filteredItems.map((item) => {
+                const current = Number(item.current_quantity || 0);
+                const minimum = Number(item.minimum_quantity || 0);
+                const isCritical = minimum > 0 && current <= minimum;
 
-              return (
-                <tr key={item.id}>
-                  <td>
-                    <strong>{item.reference || "-"}</strong>
-                  </td>
+                return (
+                  <tr key={item.id}>
+                    <td>
+                      <strong>{item.reference || "-"}</strong>
+                    </td>
 
-                  <td>{item.name}</td>
+                    <td>{item.name}</td>
 
-                  <td>{item.stock_categories?.name || "-"}</td>
+                    <td>{item.category || "-"}</td>
 
-                  <td>
-                    {item.current_quantity} {item.unit}
-                  </td>
+                    <td>
+                      {current.toLocaleString("fr-FR")} {item.unit}
+                    </td>
 
-                  <td>
-                    {item.minimum_quantity} {item.unit}
-                  </td>
+                    <td>
+                      {minimum.toLocaleString("fr-FR")} {item.unit}
+                    </td>
 
-                  <td>
-                    {isCritical ? (
-                      <span className="status-pill refused">Stock bas</span>
-                    ) : (
-                      <span className="status-pill validated">OK</span>
-                    )}
-                  </td>
+                    <td>
+                      <span className="stock-price-pill">
+                        {formatMoney(item.unit_price)} / {priceUnitLabel(item.price_unit)}
+                      </span>
+                      {item.price_unit === "tonne" && (
+                        <small>
+                          <br />
+                          soit {formatMoney(normalizedUnitCost(item))} / kg
+                        </small>
+                      )}
+                    </td>
 
-                  <td>
-                    <div className="inline-actions">
-                      <button
-                        className="btn small"
-                        onClick={() => moveStock(item, "in")}
-                      >
-                        + Entrée
-                      </button>
+                    <td>{formatMoney(stockValue(item))}</td>
 
-                      <button
-                        className="btn small"
-                        onClick={() => moveStock(item, "out")}
-                      >
-                        - Sortie
-                      </button>
+                    <td>
+                      {isCritical ? (
+                        <span className="status-pill refused">Stock bas</span>
+                      ) : (
+                        <span className="status-pill validated">OK</span>
+                      )}
+                    </td>
 
-                      <button
-                        className="btn small"
-                        onClick={() => editQuantity(item)}
-                      >
-                        Modifier qté
-                      </button>
+                    <td>
+                      <div className="inline-actions">
+                        <button className="btn small" onClick={() => moveStock(item, "in")}>
+                          + Entrée
+                        </button>
 
-                      <button
-                        className="btn small"
-                        onClick={() => editMinimum(item)}
-                      >
-                        Modifier mini
-                      </button>
+                        <button className="btn small" onClick={() => moveStock(item, "out")}>
+                          - Sortie
+                        </button>
 
-                      <button
-                        className="btn small"
-                        onClick={() => editReference(item)}
-                      >
-                        Modifier réf.
-                      </button>
+                        <button className="btn small" onClick={() => editQuantity(item)}>
+                          Qté
+                        </button>
 
-                      <button
-                        className="btn small"
-                        onClick={() => editSubCategory(item)}
-                      >
-                        Sous-cat.
-                      </button>
+                        <button className="btn small" onClick={() => editMinimum(item)}>
+                          Mini
+                        </button>
 
-                      <button
-                        className="btn small danger-soft"
-                        onClick={() => deleteItem(item)}
-                      >
-                        Supprimer
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+                        <button className="btn small" onClick={() => editPrice(item)}>
+                          Prix
+                        </button>
+
+                        <button className="btn small danger-soft" onClick={() => archiveItem(item)}>
+                          Archiver
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
       </div>
     </section>
   );

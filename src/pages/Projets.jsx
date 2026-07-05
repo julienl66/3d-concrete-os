@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { supabase } from "../services/supabase.js";
 
-export default function Projets({ user }) {
+export default function Projets({ user, permissions }) {
   const [projects, setProjects] = useState([]);
   const [requests, setRequests] = useState([]);
   const [selectedProject, setSelectedProject] = useState(null);
@@ -29,6 +29,12 @@ export default function Projets({ user }) {
     requested_installation_date: "",
   });
 
+  function hasRight(action) {
+    if (user?.role === "admin") return true;
+    return !!permissions?.projets?.[action];
+  }
+
+
   useEffect(() => {
     loadData();
   }, []);
@@ -47,6 +53,7 @@ export default function Projets({ user }) {
     const { data: requestsData, error: requestsError } = await supabase
       .from("project_requests")
       .select("*")
+      .eq("status", "submitted")
       .order("created_at", { ascending: false });
 
     if (requestsError) {
@@ -165,6 +172,11 @@ export default function Projets({ user }) {
   }
 
   async function validateRequest(request) {
+    if (!hasRight("can_validate")) {
+      setMessage("Action non autorisée.");
+      return;
+    }
+
     const { data: project, error: projectError } = await supabase
       .from("projects")
       .insert({
@@ -179,6 +191,7 @@ export default function Projets({ user }) {
         validated_installation_date: request.requested_installation_date,
         estimated_hours: 0,
         progress_percent: 0,
+        project_color: request.project_color || "#2563eb",
       })
       .select()
       .single();
@@ -207,6 +220,11 @@ export default function Projets({ user }) {
   }
 
   async function refuseRequest(request) {
+    if (!hasRight("can_validate")) {
+      setMessage("Action non autorisée.");
+      return;
+    }
+
     const reason = window.prompt("Motif du refus ?");
     if (reason === null) return;
 
@@ -229,7 +247,40 @@ export default function Projets({ user }) {
     loadData();
   }
 
+  async function deleteRequest(request) {
+    if (!hasRight("can_delete")) {
+      setMessage("Action non autorisée.");
+      return;
+    }
+
+    const ok = window.confirm(`Supprimer la demande projet "${request.project_name}" ?`);
+    if (!ok) return;
+
+    const { error } = await supabase
+      .from("project_requests")
+      .update({
+        status: "deleted",
+        admin_comment: "Demande supprimée depuis l'interface",
+        validated_by: user.id,
+        validated_at: new Date().toISOString(),
+      })
+      .eq("id", request.id);
+
+    if (error) {
+      setMessage(error.message);
+      return;
+    }
+
+    setMessage("Demande supprimée.");
+    loadData();
+  }
+
   async function updateProject(project, patch) {
+    if (!hasRight("can_edit")) {
+      setMessage("Action non autorisée.");
+      return;
+    }
+
     const { error } = await supabase.from("projects").update(patch).eq("id", project.id);
 
     if (error) {
@@ -242,6 +293,11 @@ export default function Projets({ user }) {
   }
 
   async function archiveProject(project) {
+    if (!hasRight("can_archive")) {
+      setMessage("Action non autorisée.");
+      return;
+    }
+
     const ok = window.confirm(`Archiver le projet "${project.name}" ?`);
     if (!ok) return;
 
@@ -265,6 +321,11 @@ export default function Projets({ user }) {
   }
 
   async function deleteProject(project) {
+    if (!hasRight("can_delete")) {
+      setMessage("Action non autorisée.");
+      return;
+    }
+
     const ok = window.confirm(
       `Supprimer définitivement le projet "${project.name}" ? Cette action est irréversible.`
     );
@@ -948,12 +1009,12 @@ export default function Projets({ user }) {
                   <th>Livrabilité</th>
                   <th>Pose</th>
                   <th>Statut</th>
-                  {user.role === "admin" && <th>Actions</th>}
+                  {hasRight("can_validate") && <th>Actions</th>}
                 </tr>
               </thead>
 
               <tbody>
-                {requests.map((request) => (
+                {requests.filter((request) => request.status === "submitted").map((request) => (
                   <tr key={request.id}>
                     <td>
                       <strong>{request.project_name}</strong>
@@ -969,7 +1030,7 @@ export default function Projets({ user }) {
                       </span>
                     </td>
 
-                    {user.role === "admin" && (
+                    {hasRight("can_validate") && (
                       <td>
                         {request.status === "submitted" ? (
                           <div className="inline-actions">
@@ -984,6 +1045,13 @@ export default function Projets({ user }) {
                               onClick={() => refuseRequest(request)}
                             >
                               Refuser
+                            </button>
+
+                            <button
+                              className="btn small danger-soft"
+                              onClick={() => deleteRequest(request)}
+                            >
+                              Supprimer
                             </button>
                           </div>
                         ) : (

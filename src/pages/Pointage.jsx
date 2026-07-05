@@ -1,142 +1,250 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../services/supabase.js";
 
-function today() {
-  return new Date().toISOString().slice(0, 10);
+function todayRange() {
+  const start = new Date();
+  start.setHours(0, 0, 0, 0);
+
+  const end = new Date();
+  end.setHours(23, 59, 59, 999);
+
+  return {
+    start: start.toISOString(),
+    end: end.toISOString(),
+  };
 }
 
-function calculateHours(start, end, pause) {
-  if (!start || !end) return 0;
-  const [h1, m1] = start.split(":").map(Number);
-  const [h2, m2] = end.split(":").map(Number);
-  let a = h1 * 60 + m1;
-  let b = h2 * 60 + m2;
-  if (b < a) b += 24 * 60;
-  return Math.round((Math.max(0, b - a - Number(pause || 0)) / 60) * 100) / 100;
+function formatTime(date) {
+  return new Date(date).toLocaleTimeString("fr-FR", {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function labelEvent(type) {
+  const labels = {
+    ARRIVAL: "Arrivée",
+    PAUSE: "Pause",
+    RESUME: "Reprise",
+    DEPART: "Départ",
+  };
+
+  return labels[type] || type;
+}
+
+function calculateWorkedTime(events) {
+  let totalMs = 0;
+  let workStart = null;
+
+  for (const event of events) {
+    if (event.event_type === "ARRIVAL" || event.event_type === "RESUME") {
+      workStart = new Date(event.event_time);
+    }
+
+    if ((event.event_type === "PAUSE" || event.event_type === "DEPART") && workStart) {
+      totalMs += new Date(event.event_time) - workStart;
+      workStart = null;
+    }
+  }
+
+  if (workStart) {
+    totalMs += new Date() - workStart;
+  }
+
+  return totalMs / 1000 / 60 / 60;
 }
 
 export default function Pointage({ user }) {
   const [projects, setProjects] = useState([]);
-  const [workDate, setWorkDate] = useState(today());
+  const [projectId, setProjectId] = useState("");
+  const [events, setEvents] = useState([]);
   const [message, setMessage] = useState("");
-  const [entries, setEntries] = useState([
-    { project_id: "", start_time: "", end_time: "", break_minutes: 0, comment: "" },
-  ]);
 
-  useEffect(() => { loadProjects(); }, []);
+  useEffect(() => {
+    loadProjects();
+    loadEvents();
+  }, []);
 
   async function loadProjects() {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from("projects")
       .select("*")
       .eq("active", true)
       .order("name");
 
+    if (error) {
+      setMessage(error.message);
+      return;
+    }
+
     setProjects(data || []);
-    setEntries([{ project_id: data?.[0]?.id || "", start_time: "", end_time: "", break_minutes: 0, comment: "" }]);
+    if (data?.length) setProjectId(data[0].id);
   }
 
-  function updateEntry(index, field, value) {
-    setEntries(current => current.map((e, i) => i === index ? { ...e, [field]: value } : e));
+  async function loadEvents() {
+    const range = todayRange();
+
+    const { data, error } = await supabase
+      .from("punch_events")
+      .select("*, projects(name)")
+      .eq("employee_id", user.id)
+      .gte("event_time", range.start)
+      .lte("event_time", range.end)
+      .order("event_time", { ascending: true });
+
+    if (error) {
+      setMessage(error.message);
+      return;
+    }
+
+    setEvents(data || []);
   }
 
-  function addLine() {
-    setEntries(current => [
-      ...current,
-      { project_id: projects[0]?.id || "", start_time: "", end_time: "", break_minutes: 0, comment: "" },
-    ]);
-  }
+  const lastEvent = events[events.length - 1];
 
-  function removeLine(index) {
-    setEntries(current => current.filter((_, i) => i !== index));
-  }
+  const status = useMemo(() => {
+    if (!lastEvent) return "ABSENT";
+    if (lastEvent.event_type === "ARRIVAL") return "WORKING";
+    if (lastEvent.event_type === "RESUME") return "WORKING";
+    if (lastEvent.event_type === "PAUSE") return "PAUSED";
+    if (lastEvent.event_type === "DEPART") return "FINISHED";
+    return "ABSENT";
+  }, [lastEvent]);
 
-  async function saveDay() {
+  const workedHours = useMemo(() => {
+    return calculateWorkedTime(events);
+  }, [events]);
+
+  async function punch(eventType) {
     setMessage("");
 
-    const rows = entries
-      .filter(e => e.project_id && e.start_time && e.end_time)
-      .map(e => ({
-        employee_id: user.id,
-        project_id: e.project_id,
-        work_date: workDate,
-        start_time: e.start_time,
-        end_time: e.end_time,
-        break_minutes: Number(e.break_minutes || 0),
-        total_hours: calculateHours(e.start_time, e.end_time, e.break_minutes),
-        comment: e.comment || "",
-      }));
+    if ((eventType === "ARRIVAL" || eventType === "RESUME") && !projectId) {
+      setMessage("Choisis un projet avant de pointer.");
+      return;
+    }
 
-    if (!rows.length) return setMessage("Aucune ligne complète à enregistrer.");
+    const { error } = await supabase.from("punch_events").insert({
+      employee_id: user.id,
+      project_id: eventType === "ARRIVAL" || eventType === "RESUME" ? projectId : null,
+      event_type: eventType,
+    });
 
-    const { error } = await supabase.from("time_entries").insert(rows);
-    if (error) return setMessage(error.message);
+    if (error) {
+      setMessage(error.message);
+      return;
+    }
 
-    setMessage("Journée enregistrée.");
-    setEntries([{ project_id: projects[0]?.id || "", start_time: "", end_time: "", break_minutes: 0, comment: "" }]);
+    await loadEvents();
   }
-
-  const totalDay = entries.reduce((sum, e) => sum + calculateHours(e.start_time, e.end_time, e.break_minutes), 0);
 
   return (
     <section className="page">
       <div className="page-head">
         <div>
-          <p className="eyebrow">Multi-projets</p>
+          <p className="eyebrow">Pointeuse intelligente</p>
           <h2>Pointage</h2>
-          <p>Saisis une journée en la répartissant sur plusieurs projets.</p>
+          <p>Arrivée, pause, reprise et départ sans saisir les heures.</p>
         </div>
-        <div className="total-pill">{totalDay.toFixed(2)} h</div>
+
+        <div className="total-pill">
+          {workedHours.toFixed(2)} h aujourd’hui
+        </div>
       </div>
 
       {message && <div className="alert info">{message}</div>}
 
       <div className="card">
-        <label>Date travaillée</label>
-        <input type="date" value={workDate} onChange={(e) => setWorkDate(e.target.value)} />
+        <h3>État actuel</h3>
 
-        {entries.map((entry, index) => (
-          <div className="entry-line" key={index}>
-            <div className="entry-title">Projet #{index + 1}</div>
+        <div className="status-box">
+          <strong>
+            {status === "ABSENT" && "Absent"}
+            {status === "WORKING" && "En travail"}
+            {status === "PAUSED" && "En pause"}
+            {status === "FINISHED" && "Journée terminée"}
+          </strong>
 
-            <div className="grid">
-              <div>
-                <label>Projet</label>
-                <select value={entry.project_id} onChange={(e) => updateEntry(index, "project_id", e.target.value)}>
-                  {projects.map(project => <option key={project.id} value={project.id}>{project.name}</option>)}
-                </select>
-              </div>
-
-              <div>
-                <label>Pause minutes</label>
-                <input type="number" value={entry.break_minutes} onChange={(e) => updateEntry(index, "break_minutes", e.target.value)} />
-              </div>
-
-              <div>
-                <label>Début</label>
-                <input type="time" value={entry.start_time} onChange={(e) => updateEntry(index, "start_time", e.target.value)} />
-              </div>
-
-              <div>
-                <label>Fin</label>
-                <input type="time" value={entry.end_time} onChange={(e) => updateEntry(index, "end_time", e.target.value)} />
-              </div>
-            </div>
-
-            <label>Commentaire</label>
-            <textarea value={entry.comment} onChange={(e) => updateEntry(index, "comment", e.target.value)} placeholder="Détail de l'intervention..." />
-
-            <div className="line-footer">
-              <strong>{calculateHours(entry.start_time, entry.end_time, entry.break_minutes).toFixed(2)} h</strong>
-              {entries.length > 1 && <button className="btn danger" onClick={() => removeLine(index)}>Supprimer</button>}
-            </div>
-          </div>
-        ))}
-
-        <div className="actions">
-          <button className="btn secondary" onClick={addLine}>Ajouter un projet</button>
-          <button className="btn primary" onClick={saveDay}>Enregistrer la journée</button>
+          {lastEvent && (
+            <span>
+              Dernier pointage : {labelEvent(lastEvent.event_type)} à{" "}
+              {formatTime(lastEvent.event_time)}
+            </span>
+          )}
         </div>
+
+        {(status === "ABSENT" || status === "WORKING" || status === "PAUSED") && (
+          <>
+            <label>Projet</label>
+            <select value={projectId} onChange={(e) => setProjectId(e.target.value)}>
+              {projects.map((project) => (
+                <option key={project.id} value={project.id}>
+                  {project.name}
+                </option>
+              ))}
+            </select>
+          </>
+        )}
+
+        <div className="punch-grid">
+          <button
+            className="btn primary"
+            disabled={status !== "ABSENT" && status !== "FINISHED"}
+            onClick={() => punch("ARRIVAL")}
+          >
+            🟢 Arrivée
+          </button>
+
+          <button
+            className="btn secondary"
+            disabled={status !== "WORKING"}
+            onClick={() => punch("PAUSE")}
+          >
+            ☕ Pause
+          </button>
+
+          <button
+            className="btn secondary"
+            disabled={status !== "PAUSED"}
+            onClick={() => punch("RESUME")}
+          >
+            ▶️ Reprise
+          </button>
+
+          <button
+            className="btn danger"
+            disabled={status !== "WORKING" && status !== "PAUSED"}
+            onClick={() => punch("DEPART")}
+          >
+            🔴 Départ
+          </button>
+        </div>
+      </div>
+
+      <div className="card">
+        <h3>Historique du jour</h3>
+
+        {events.length === 0 ? (
+          <p>Aucun pointage aujourd’hui.</p>
+        ) : (
+          <table>
+            <thead>
+              <tr>
+                <th>Heure</th>
+                <th>Action</th>
+                <th>Projet</th>
+              </tr>
+            </thead>
+            <tbody>
+              {events.map((event) => (
+                <tr key={event.id}>
+                  <td>{formatTime(event.event_time)}</td>
+                  <td>{labelEvent(event.event_type)}</td>
+                  <td>{event.projects?.name || "-"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
       </div>
     </section>
   );

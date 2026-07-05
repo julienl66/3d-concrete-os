@@ -183,3 +183,38 @@ th { color: var(--muted); font-size: 13px; text-transform: uppercase; letter-spa
   .topbar, .page-head, .toolbar { display: block; }
   .toolbar .btn { width: 100%; margin-top: 10px; }
 }
+.status-box {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 18px;
+  padding: 18px;
+  margin-bottom: 18px;
+}
+
+.status-box strong {
+  display: block;
+  font-size: 24px;
+  margin-bottom: 6px;
+}
+
+.status-box span {
+  color: #64748b;
+}
+
+.punch-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 14px;
+  margin-top: 18px;
+}
+
+.punch-grid button:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+@media (max-width: 850px) {
+  .punch-grid {
+    grid-template-columns: 1fr;
+  }
+}

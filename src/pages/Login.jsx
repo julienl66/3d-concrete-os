@@ -7,7 +7,6 @@ export default function Login({ onLogin }) {
 
   async function handleSubmit(e) {
     e.preventDefault();
-
     setMessage("");
 
     if (!pin.trim()) {
@@ -36,24 +35,18 @@ export default function Login({ onLogin }) {
   }
 
   return (
-    <main className="login-page">
-      <form className="login-card" onSubmit={handleSubmit}>
-        <div className="brand login-brand">
-          <span>3D</span>
-          <div>
-            <strong>CONCRETE</strong>
-            <small>OS interne</small>
-          </div>
-        </div>
+    <main className="login-page premium-login-page">
+      <form className="login-card premium-login-card" onSubmit={handleSubmit}>
+        <img
+          src="/logo-3d-concrete.jpg"
+          alt="3D Concrete"
+          className="login-logo"
+        />
 
         <h1>Connexion</h1>
         <p>Entre ton code PIN pour accéder à l'ERP.</p>
 
-        {message && (
-          <div className="alert info">
-            {message}
-          </div>
-        )}
+        {message && <div className="alert info">{message}</div>}
 
         <label>Code PIN</label>
 

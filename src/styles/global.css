@@ -5466,3 +5466,300 @@ th { color: var(--muted); font-size: 13px; text-transform: uppercase; letter-spa
   font-size: 12px;
   font-weight: 900;
 }
+
+/* =========================================================
+   3D CONCRETE ERP — REDESIGN V1
+   Ajout non destructif : à coller en bas de global.css
+   ========================================================= */
+
+:root {
+  --3dc-orange: #f59e0b;
+  --3dc-orange-dark: #ea580c;
+  --3dc-green: #16a34a;
+  --3dc-anthracite: #101820;
+  --3dc-anthracite-2: #17212b;
+  --3dc-soft: #f8fafc;
+  --3dc-border: #e5e7eb;
+}
+
+body {
+  background:
+    radial-gradient(circle at 25% 0%, rgba(245, 158, 11, 0.13), transparent 28%),
+    radial-gradient(circle at 85% 5%, rgba(22, 163, 74, 0.10), transparent 30%),
+    linear-gradient(135deg, #f8fafc 0%, #eef2f7 100%);
+}
+
+.app-shell {
+  background: transparent;
+}
+
+.premium-sidebar,
+.sidebar {
+  background:
+    radial-gradient(circle at 45% 0%, rgba(245, 158, 11, 0.16), transparent 32%),
+    linear-gradient(180deg, #111827 0%, #0f172a 100%) !important;
+  border-right: 1px solid rgba(255,255,255,0.08);
+  box-shadow: 18px 0 45px rgba(15, 23, 42, 0.22);
+}
+
+.premium-logo-wrap {
+  display: flex;
+  justify-content: center;
+  padding: 4px 6px 24px;
+  border-bottom: 1px solid rgba(255,255,255,0.10);
+  margin-bottom: 22px;
+}
+
+.premium-logo-wrap img {
+  width: min(190px, 100%);
+  height: auto;
+  display: block;
+  object-fit: contain;
+  filter: drop-shadow(0 12px 24px rgba(0,0,0,0.28));
+  border-radius: 14px;
+}
+
+.sidebar nav button {
+  border: 1px solid rgba(255,255,255,0.08) !important;
+  background: rgba(255,255,255,0.025) !important;
+  color: rgba(255,255,255,0.86) !important;
+  font-weight: 900 !important;
+}
+
+.sidebar nav button:hover {
+  background: rgba(245, 158, 11, 0.13) !important;
+  transform: translateX(2px);
+}
+
+.sidebar nav button.active {
+  background: linear-gradient(135deg, var(--3dc-orange), var(--3dc-orange-dark)) !important;
+  color: white !important;
+  box-shadow: 0 14px 30px rgba(245, 158, 11, 0.28);
+  border-color: rgba(255,255,255,0.18) !important;
+}
+
+.sidebar nav button span {
+  width: 24px;
+  display: inline-flex;
+  justify-content: center;
+}
+
+.sidebar-version {
+  margin-top: 26px;
+  padding: 18px 14px;
+  border-radius: 20px;
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.10);
+  color: white;
+}
+
+.sidebar-version strong,
+.sidebar-version small {
+  display: block;
+}
+
+.sidebar-version small {
+  margin-top: 5px;
+  color: rgba(255,255,255,0.62);
+  font-weight: 800;
+}
+
+.premium-header,
+.header {
+  background: rgba(255,255,255,0.82) !important;
+  backdrop-filter: blur(18px);
+  border-bottom: 1px solid rgba(226, 232, 240, 0.95);
+  box-shadow: 0 18px 38px rgba(15, 23, 42, 0.07);
+}
+
+.header h1 {
+  font-size: 30px !important;
+  letter-spacing: -0.04em;
+}
+
+.header p {
+  color: #64748b;
+  font-weight: 800;
+}
+
+.header-user-zone {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.user-avatar {
+  width: 46px;
+  height: 46px;
+  border-radius: 16px;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(135deg, var(--3dc-orange), var(--3dc-green));
+  color: white;
+  font-weight: 1000;
+  box-shadow: 0 12px 26px rgba(245, 158, 11, 0.26);
+}
+
+.page {
+  animation: pageEnter 0.22s ease-out;
+}
+
+@keyframes pageEnter {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.card,
+.stat-card {
+  border: 1px solid rgba(226, 232, 240, 0.95) !important;
+  background: rgba(255,255,255,0.92) !important;
+  box-shadow: 0 18px 38px rgba(15, 23, 42, 0.075) !important;
+}
+
+.stat-card {
+  overflow: hidden;
+  position: relative;
+}
+
+.stat-card::after {
+  content: "";
+  position: absolute;
+  right: -38px;
+  top: -38px;
+  width: 110px;
+  height: 110px;
+  border-radius: 999px;
+  background: rgba(245, 158, 11, 0.10);
+}
+
+.stat-card.accent {
+  background:
+    radial-gradient(circle at top right, rgba(245, 158, 11, 0.20), transparent 42%),
+    linear-gradient(135deg, #ffffff, #fff7ed) !important;
+  border-color: #fed7aa !important;
+}
+
+.stat-card span {
+  color: #64748b !important;
+}
+
+.stat-card strong {
+  color: #0f172a;
+}
+
+.btn.primary {
+  background: linear-gradient(135deg, var(--3dc-orange), var(--3dc-orange-dark)) !important;
+  color: white !important;
+  box-shadow: 0 12px 24px rgba(245, 158, 11, 0.25);
+}
+
+.btn.secondary {
+  background: #111827 !important;
+  color: white !important;
+}
+
+.status-pill.validated,
+.alert-green {
+  background: #dcfce7 !important;
+  color: #15803d !important;
+}
+
+.status-pill.refused,
+.alert-red {
+  background: #fee2e2 !important;
+  color: #b91c1c !important;
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+  border-color: var(--3dc-orange) !important;
+  box-shadow: 0 0 0 4px rgba(245, 158, 11, 0.16) !important;
+}
+
+.progress-line div {
+  background: linear-gradient(90deg, var(--3dc-orange), var(--3dc-green)) !important;
+}
+
+.premium-login-page {
+  background:
+    radial-gradient(circle at 50% 0%, rgba(245, 158, 11, 0.16), transparent 32%),
+    linear-gradient(135deg, #0f172a 0%, #111827 100%);
+}
+
+.premium-login-card {
+  width: min(480px, calc(100vw - 32px));
+  border: 1px solid rgba(255,255,255,0.18) !important;
+  background: rgba(255,255,255,0.96) !important;
+  box-shadow: 0 30px 70px rgba(0,0,0,0.26) !important;
+}
+
+.login-logo {
+  width: 260px;
+  max-width: 100%;
+  display: block;
+  margin: 0 auto 28px;
+  border-radius: 18px;
+}
+
+.login-card h1 {
+  text-align: center;
+}
+
+.login-card p {
+  text-align: center;
+}
+
+@media (max-width: 1050px) {
+  .premium-logo-wrap {
+    justify-content: flex-start;
+  }
+
+  .premium-logo-wrap img {
+    width: 180px;
+  }
+
+  .header-user-zone {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+}
+/* FIX HEADER ALIGNEMENT DROITE */
+
+.premium-header,
+.header {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  gap: 24px !important;
+  padding: 28px 36px !important;
+}
+
+.header > div:first-child {
+  flex: 1 !important;
+  min-width: 0 !important;
+}
+
+.header-user-zone {
+  margin-left: auto !important;
+  flex-shrink: 0 !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: flex-end !important;
+  gap: 16px !important;
+}
+
+.user-avatar {
+  flex-shrink: 0 !important;
+}
+
+.header-user-zone .btn {
+  white-space: nowrap !important;
+}

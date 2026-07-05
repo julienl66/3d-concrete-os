@@ -1,7 +1,7 @@
 import { canAccess } from "../services/permissions.js";
 
 const items = [
-  { id: "dashboard", label: "Tableau de bord", icon: "📊" },
+  { id: "dashboard", label: "Tableau de bord", icon: "🏠" },
   { id: "pointage", label: "Pointage", icon: "⏱️" },
   { id: "employes", label: "Employés", icon: "👷" },
   { id: "projets", label: "Projets", icon: "📁" },
@@ -17,13 +17,9 @@ export default function Sidebar({ page, setPage, user, permissions }) {
   );
 
   return (
-    <aside className="sidebar">
-      <div className="brand">
-        <span>3D</span>
-        <div>
-          <strong>CONCRETE</strong>
-          <small>OS interne</small>
-        </div>
+    <aside className="sidebar premium-sidebar">
+      <div className="premium-logo-wrap">
+        <img src="/logo-3d-concrete.jpg" alt="3D Concrete" />
       </div>
 
       <nav>
@@ -38,6 +34,11 @@ export default function Sidebar({ page, setPage, user, permissions }) {
           </button>
         ))}
       </nav>
+
+      <div className="sidebar-version">
+        <strong>3D Concrete ERP</strong>
+        <small>Version 1.0</small>
+      </div>
     </aside>
   );
 }

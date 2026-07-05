@@ -3,6 +3,8 @@ const items = [
   { id: "pointage", label: "Pointage", icon: "⏱️" },
   { id: "employes", label: "Employés", icon: "👷", adminOnly: true },
   { id: "projets", label: "Projets", icon: "📁", adminOnly: true },
+  { id: "planning", label: "Planning", icon: "📅", adminOnly: true },
+  { id: "stock", label: "Stock", icon: "📦", adminOnly: true },
 ];
 
 export default function Sidebar({ page, setPage, user }) {

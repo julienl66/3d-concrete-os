@@ -1,150 +1,254 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../services/supabase.js";
 
-const WEEK_LIMIT = 35;
+function todayRange() {
+  const start = new Date();
+  start.setHours(0, 0, 0, 0);
 
-function currentMonth() {
-  return new Date().toISOString().slice(0, 7);
+  const end = new Date();
+  end.setHours(23, 59, 59, 999);
+
+  return {
+    start: start.toISOString(),
+    end: end.toISOString(),
+  };
 }
 
-function getWeekNumber(dateString) {
-  const date = new Date(dateString);
-  const firstDay = new Date(date.getFullYear(), 0, 1);
-  const pastDays = Math.floor((date - firstDay) / 86400000);
-  return Math.ceil((pastDays + firstDay.getDay() + 1) / 7);
+function formatTime(date) {
+  if (!date) return "-";
+  return new Date(date).toLocaleTimeString("fr-FR", {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function formatHours(hours) {
+  return `${Number(hours || 0).toFixed(2)} h`;
+}
+
+function labelEvent(type) {
+  const labels = {
+    ARRIVAL: "Arrivée",
+    PAUSE: "Pause",
+    RESUME: "Reprise",
+    DEPART: "Départ",
+  };
+
+  return labels[type] || type;
+}
+
+function getStatus(lastEvent) {
+  if (!lastEvent) return "ABSENT";
+  if (lastEvent.event_type === "ARRIVAL") return "WORKING";
+  if (lastEvent.event_type === "RESUME") return "WORKING";
+  if (lastEvent.event_type === "PAUSE") return "PAUSED";
+  if (lastEvent.event_type === "DEPART") return "FINISHED";
+  return "ABSENT";
+}
+
+function calculateWorkedTime(events) {
+  let totalMs = 0;
+  let workStart = null;
+
+  for (const event of events) {
+    if (event.event_type === "ARRIVAL" || event.event_type === "RESUME") {
+      workStart = new Date(event.event_time);
+    }
+
+    if ((event.event_type === "PAUSE" || event.event_type === "DEPART") && workStart) {
+      totalMs += new Date(event.event_time) - workStart;
+      workStart = null;
+    }
+  }
+
+  if (workStart) {
+    totalMs += new Date() - workStart;
+  }
+
+  return totalMs / 1000 / 60 / 60;
 }
 
 export default function Dashboard({ user }) {
-  const [entries, setEntries] = useState([]);
-  const [month, setMonth] = useState(currentMonth());
+  const [employees, setEmployees] = useState([]);
+  const [events, setEvents] = useState([]);
   const [error, setError] = useState("");
 
-  useEffect(() => { loadEntries(); }, [month]);
+  useEffect(() => {
+    loadDashboard();
 
-  async function loadEntries() {
-    const start = `${month}-01`;
-    const end = new Date(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 1).toISOString().slice(0, 10);
+    const interval = setInterval(() => {
+      loadDashboard();
+    }, 30000);
 
-    let query = supabase
-      .from("time_entries")
-      .select("*, employees(name), projects(name)")
-      .gte("work_date", start)
-      .lt("work_date", end)
-      .order("work_date", { ascending: false });
+    return () => clearInterval(interval);
+  }, []);
 
-    if (user.role !== "admin") query = query.eq("employee_id", user.id);
+  async function loadDashboard() {
+    const range = todayRange();
 
-    const { data, error } = await query;
-    if (error) setError(error.message);
-    else setEntries(data || []);
-  }
+    const { data: employeesData, error: employeesError } = await supabase
+      .from("employees")
+      .select("*")
+      .eq("active", true)
+      .order("name");
 
-  const stats = useMemo(() => {
-    const total = entries.reduce((sum, e) => sum + Number(e.total_hours || 0), 0);
-    const byEmployee = {};
-    const byProject = {};
-
-    for (const e of entries) {
-      const employee = e.employees?.name || "Inconnu";
-      const project = e.projects?.name || "Sans projet";
-      byProject[project] = (byProject[project] || 0) + Number(e.total_hours || 0);
-
-      if (!byEmployee[employee]) byEmployee[employee] = {};
-      const week = `${new Date(e.work_date).getFullYear()}-S${getWeekNumber(e.work_date)}`;
-      byEmployee[employee][week] = (byEmployee[employee][week] || 0) + Number(e.total_hours || 0);
+    if (employeesError) {
+      setError(employeesError.message);
+      return;
     }
 
-    let overtime = 0;
-    Object.values(byEmployee).forEach(weeks => {
-      Object.values(weeks).forEach(hours => {
-        if (hours > WEEK_LIMIT) overtime += hours - WEEK_LIMIT;
-      });
-    });
+    const { data: eventsData, error: eventsError } = await supabase
+      .from("punch_events")
+      .select("*, employees(name), projects(name)")
+      .gte("event_time", range.start)
+      .lte("event_time", range.end)
+      .order("event_time", { ascending: true });
 
-    return { total, overtime, normal: Math.max(0, total - overtime), byProject };
-  }, [entries]);
+    if (eventsError) {
+      setError(eventsError.message);
+      return;
+    }
 
-  function exportCSV() {
-    const rows = [
-      ["Employé", "Date", "Projet", "Début", "Fin", "Pause", "Total", "Commentaire"],
-      ...entries.map(e => [
-        e.employees?.name || "",
-        e.work_date,
-        e.projects?.name || "",
-        e.start_time,
-        e.end_time,
-        e.break_minutes,
-        e.total_hours,
-        e.comment || "",
-      ]),
-    ];
-
-    const csv = rows
-      .map(row => row.map(cell => `"${String(cell).replaceAll('"', '""')}"`).join(";"))
-      .join("\\n");
-
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `export-heures-${month}.csv`;
-    link.click();
-    URL.revokeObjectURL(url);
+    setEmployees(employeesData || []);
+    setEvents(eventsData || []);
   }
+
+  const rows = useMemo(() => {
+    return employees.map((employee) => {
+      const employeeEvents = events.filter((event) => event.employee_id === employee.id);
+      const lastEvent = employeeEvents[employeeEvents.length - 1];
+      const status = getStatus(lastEvent);
+      const workedHours = calculateWorkedTime(employeeEvents);
+
+      const currentProject =
+        status === "WORKING"
+          ? lastEvent?.projects?.name || "-"
+          : "-";
+
+      return {
+        employee,
+        events: employeeEvents,
+        lastEvent,
+        status,
+        workedHours,
+        currentProject,
+      };
+    });
+  }, [employees, events]);
+
+  const totals = useMemo(() => {
+    const totalToday = rows.reduce((sum, row) => sum + row.workedHours, 0);
+    const present = rows.filter((row) => row.status === "WORKING").length;
+    const paused = rows.filter((row) => row.status === "PAUSED").length;
+    const absent = rows.filter((row) => row.status === "ABSENT").length;
+
+    return { totalToday, present, paused, absent };
+  }, [rows]);
 
   return (
     <section className="page">
       <div className="page-head">
         <div>
-          <p className="eyebrow">Base 35 h/semaine</p>
+          <p className="eyebrow">Temps réel</p>
           <h2>Tableau de bord</h2>
-          <p>Récapitulatif mensuel des heures, projets et heures supplémentaires.</p>
-        </div>
-
-        <div className="toolbar">
-          <input type="month" value={month} onChange={(e) => setMonth(e.target.value)} />
-          <button className="btn primary" onClick={exportCSV}>Exporter CSV</button>
+          <p>Présence, projet actuel et temps travaillé aujourd’hui.</p>
         </div>
       </div>
 
       {error && <div className="alert error">{error}</div>}
 
       <div className="stats-grid">
-        <div className="stat-card"><span>Total du mois</span><strong>{stats.total.toFixed(2)} h</strong></div>
-        <div className="stat-card"><span>Heures normales</span><strong>{stats.normal.toFixed(2)} h</strong></div>
-        <div className="stat-card accent"><span>Heures sup. estimées</span><strong>{stats.overtime.toFixed(2)} h</strong></div>
+        <div className="stat-card">
+          <span>Total aujourd’hui</span>
+          <strong>{formatHours(totals.totalToday)}</strong>
+        </div>
+
+        <div className="stat-card">
+          <span>Présents</span>
+          <strong>{totals.present}</strong>
+        </div>
+
+        <div className="stat-card accent">
+          <span>En pause</span>
+          <strong>{totals.paused}</strong>
+        </div>
       </div>
 
-      <div className="grid-main">
-        <div className="card">
-          <h3>Dernières saisies</h3>
+      <div className="card">
+        <h3>Employés aujourd’hui</h3>
+
+        <table>
+          <thead>
+            <tr>
+              <th>Employé</th>
+              <th>État</th>
+              <th>Projet actuel</th>
+              <th>Dernier pointage</th>
+              <th>Temps aujourd’hui</th>
+            </tr>
+          </thead>
+
+          <tbody>
+            {rows.map((row) => (
+              <tr key={row.employee.id}>
+                <td>
+                  <strong>{row.employee.name}</strong>
+                </td>
+
+                <td>
+                  <span className={`status-pill ${row.status.toLowerCase()}`}>
+                    {row.status === "ABSENT" && "Absent"}
+                    {row.status === "WORKING" && "Présent"}
+                    {row.status === "PAUSED" && "En pause"}
+                    {row.status === "FINISHED" && "Parti"}
+                  </span>
+                </td>
+
+                <td>{row.currentProject}</td>
+
+                <td>
+                  {row.lastEvent
+                    ? `${labelEvent(row.lastEvent.event_type)} à ${formatTime(row.lastEvent.event_time)}`
+                    : "-"}
+                </td>
+
+                <td>
+                  <strong>{formatHours(row.workedHours)}</strong>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="card">
+        <h3>Historique des pointages du jour</h3>
+
+        {events.length === 0 ? (
+          <p>Aucun pointage aujourd’hui.</p>
+        ) : (
           <table>
             <thead>
-              <tr><th>Employé</th><th>Date</th><th>Projet</th><th>Total</th></tr>
+              <tr>
+                <th>Heure</th>
+                <th>Employé</th>
+                <th>Action</th>
+                <th>Projet</th>
+              </tr>
             </thead>
+
             <tbody>
-              {entries.slice(0, 25).map(e => (
-                <tr key={e.id}>
-                  <td>{e.employees?.name}</td>
-                  <td>{e.work_date}</td>
-                  <td>{e.projects?.name}</td>
-                  <td><strong>{Number(e.total_hours || 0).toFixed(2)} h</strong></td>
+              {events.map((event) => (
+                <tr key={event.id}>
+                  <td>{formatTime(event.event_time)}</td>
+                  <td>{event.employees?.name}</td>
+                  <td>{labelEvent(event.event_type)}</td>
+                  <td>{event.projects?.name || "-"}</td>
                 </tr>
               ))}
             </tbody>
           </table>
-        </div>
-
-        <div className="card">
-          <h3>Répartition par projet</h3>
-          {Object.entries(stats.byProject).length === 0 && <p>Aucune donnée ce mois.</p>}
-          {Object.entries(stats.byProject).map(([project, hours]) => (
-            <div className="project-row" key={project}>
-              <span>{project}</span>
-              <strong>{hours.toFixed(2)} h</strong>
-            </div>
-          ))}
-        </div>
+        )}
       </div>
     </section>
   );

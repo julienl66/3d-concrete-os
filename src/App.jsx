@@ -4,16 +4,20 @@ import Dashboard from "./pages/Dashboard.jsx";
 import Pointage from "./pages/Pointage.jsx";
 import Employes from "./pages/Employes.jsx";
 import Projets from "./pages/Projets.jsx";
+import Planning from "./pages/Planning.jsx";
 import Sidebar from "./components/Sidebar.jsx";
 import Header from "./components/Header.jsx";
+import Stock from "./pages/Stock.jsx";
 
-export default function App() {
+function App() {
   const [user, setUser] = useState(null);
   const [page, setPage] = useState("dashboard");
 
   useEffect(() => {
-    const saved = localStorage.getItem("3dc_user");
-    if (saved) setUser(JSON.parse(saved));
+    const savedUser = localStorage.getItem("3dc_user");
+    if (savedUser) {
+      setUser(JSON.parse(savedUser));
+    }
   }, []);
 
   function handleLogin(employee) {
@@ -27,18 +31,26 @@ export default function App() {
     setUser(null);
   }
 
-  if (!user) return <Login onLogin={handleLogin} />;
+  if (!user) {
+    return <Login onLogin={handleLogin} />;
+  }
 
   return (
     <div className="app-shell">
       <Sidebar page={page} setPage={setPage} user={user} />
+
       <main className="main">
-        <Header user={user} onLogout={handleLogout} />
-        {page === "dashboard" && <Dashboard user={user} />}
-        {page === "pointage" && <Pointage user={user} />}
-        {page === "employes" && <Employes user={user} />}
-        {page === "projets" && <Projets user={user} />}
-      </main>
+  <Header user={user} onLogout={handleLogout} />
+
+  {page === "dashboard" && <Dashboard user={user} />}
+  {page === "pointage" && <Pointage user={user} />}
+  {page === "employes" && <Employes user={user} />}
+  {page === "projets" && <Projets user={user} />}
+  {page === "planning" && <Planning user={user} />}
+  {page === "stock" && <Stock user={user} />}
+</main>
     </div>
   );
 }
+
+export default App;

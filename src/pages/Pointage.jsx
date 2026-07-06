@@ -4,7 +4,9 @@ import { supabase } from "../services/supabase.js";
 export default function Pointage({ user }) {
   const [projects, setProjects] = useState([]);
   const [activities, setActivities] = useState([]);
+  const [employees, setEmployees] = useState([]);
   const [events, setEvents] = useState([]);
+  const [allTodayEvents, setAllTodayEvents] = useState([]);
   const [periodEvents, setPeriodEvents] = useState([]);
   const [period, setPeriod] = useState("day");
   const [message, setMessage] = useState("");
@@ -13,6 +15,15 @@ export default function Pointage({ user }) {
   const [form, setForm] = useState({
     project_id: "",
     activity_id: "",
+    comment: "",
+  });
+
+  const [manualForm, setManualForm] = useState({
+    employee_id: "",
+    project_id: "",
+    activity_id: "",
+    event_type: "ARRIVAL",
+    event_time: "",
     comment: "",
   });
 
@@ -53,8 +64,20 @@ export default function Pointage({ user }) {
       return;
     }
 
+    const { data: employeesData, error: employeesError } = await supabase
+      .from("employees")
+      .select("*")
+      .eq("active", true)
+      .order("name");
+
+    if (employeesError) {
+      setMessage(employeesError.message);
+      return;
+    }
+
     setProjects(projectsData || []);
     setActivities(activitiesData || []);
+    setEmployees(employeesData || []);
 
     if (!form.project_id && projectsData?.length) {
       setForm((current) => ({
@@ -71,6 +94,7 @@ export default function Pointage({ user }) {
     }
 
     await loadTodayEvents();
+    await loadAllTodayEvents();
     await loadPeriodEvents();
   }
 
@@ -118,6 +142,24 @@ export default function Pointage({ user }) {
     setEvents(eventsData || []);
   }
 
+  async function loadAllTodayEvents() {
+    const startOfDay = getStartDate("day");
+
+    const { data: eventsData, error: eventsError } = await supabase
+      .from("punch_events")
+      .select("*, employees(name), projects(name, project_code), work_activities(name)")
+      .gte("event_time", startOfDay.toISOString())
+      .order("employee_id", { ascending: true })
+      .order("event_time", { ascending: true });
+
+    if (eventsError) {
+      setMessage(eventsError.message);
+      return;
+    }
+
+    setAllTodayEvents(eventsData || []);
+  }
+
   async function loadPeriodEvents() {
     const startDate = getStartDate(period);
 
@@ -134,6 +176,23 @@ export default function Pointage({ user }) {
     }
 
     setPeriodEvents(eventsData || []);
+  }
+
+  function employeeName(employeeId) {
+    const employee = employees.find((item) => item.id === employeeId);
+    return employee?.name || "-";
+  }
+
+  function toDatetimeLocalValue(value = new Date()) {
+    const date = new Date(value);
+    const offset = date.getTimezoneOffset();
+    const local = new Date(date.getTime() - offset * 60000);
+    return local.toISOString().slice(0, 16);
+  }
+
+  function fromDatetimeLocalValue(value) {
+    if (!value) return new Date().toISOString();
+    return new Date(value).toISOString();
   }
 
   function projectName(projectId) {
@@ -176,6 +235,7 @@ export default function Pointage({ user }) {
 
     setMessage("Ligne de pointage supprimée.");
     await loadTodayEvents();
+    await loadAllTodayEvents();
     await loadPeriodEvents();
   }
 
@@ -195,6 +255,7 @@ export default function Pointage({ user }) {
 
     setMessage("Commentaire modifié.");
     await loadTodayEvents();
+    await loadAllTodayEvents();
     await loadPeriodEvents();
   }
 
@@ -295,6 +356,7 @@ export default function Pointage({ user }) {
 
     setMessage("Pointage enregistré.");
     await loadTodayEvents();
+    await loadAllTodayEvents();
     await loadPeriodEvents();
   }
 
@@ -474,8 +536,143 @@ export default function Pointage({ user }) {
 
     setMessage("Pointages orphelins supprimés.");
     await loadTodayEvents();
+    await loadAllTodayEvents();
     await loadPeriodEvents();
   }
+
+  async function editPunchEvent(event) {
+    const dateValue = window.prompt(
+      "Date / heure ? Format local",
+      toDatetimeLocalValue(event.event_time)
+    );
+    if (dateValue === null) return;
+
+    const type = window.prompt(
+      "Type : ARRIVAL / PAUSE / RESUME / DEPART",
+      event.event_type || "ARRIVAL"
+    );
+    if (type === null) return;
+
+    const projectChoice = window.prompt(
+      `Projet ? Laisse vide pour aucun.\n${projects
+        .map((project, index) => `${index + 1}. ${project.project_code ? `${project.project_code} - ` : ""}${project.name}`)
+        .join("\n")}`,
+      event.project_id ? String(projects.findIndex((project) => project.id === event.project_id) + 1) : ""
+    );
+    if (projectChoice === null) return;
+
+    const activityChoice = window.prompt(
+      `Activité ?\n${activities
+        .map((activity, index) => `${index + 1}. ${activity.name}`)
+        .join("\n")}`,
+      event.activity_id ? String(activities.findIndex((activity) => activity.id === event.activity_id) + 1) : ""
+    );
+    if (activityChoice === null) return;
+
+    const comment = window.prompt("Commentaire ?", event.comment || "");
+    if (comment === null) return;
+
+    const selectedProject = projectChoice ? projects[Number(projectChoice) - 1] : null;
+    const selectedActivity = activityChoice ? activities[Number(activityChoice) - 1] : null;
+
+    const { error } = await supabase
+      .from("punch_events")
+      .update({
+        event_time: fromDatetimeLocalValue(dateValue),
+        event_type: type || event.event_type,
+        project_id: selectedProject?.id || null,
+        activity_id: selectedActivity?.id || null,
+        comment: comment || null,
+      })
+      .eq("id", event.id);
+
+    if (error) {
+      setMessage(error.message);
+      return;
+    }
+
+    setMessage("Pointage modifié.");
+    await loadTodayEvents();
+    await loadAllTodayEvents();
+    await loadPeriodEvents();
+  }
+
+  async function addManualPunchEvent(e) {
+    e.preventDefault();
+
+    if (!manualForm.employee_id) {
+      setMessage("Choisis un employé.");
+      return;
+    }
+
+    if (!manualForm.activity_id && (manualForm.event_type === "ARRIVAL" || manualForm.event_type === "RESUME")) {
+      setMessage("Choisis une activité pour un démarrage ou une reprise.");
+      return;
+    }
+
+    const { error } = await supabase.from("punch_events").insert({
+      employee_id: manualForm.employee_id,
+      project_id: manualForm.project_id || null,
+      activity_id: manualForm.activity_id || null,
+      event_type: manualForm.event_type,
+      event_time: fromDatetimeLocalValue(manualForm.event_time || toDatetimeLocalValue()),
+      comment: manualForm.comment || "Ajout manuel",
+    });
+
+    if (error) {
+      setMessage(error.message);
+      return;
+    }
+
+    setManualForm((current) => ({
+      ...current,
+      event_time: "",
+      comment: "",
+    }));
+
+    setMessage("Pointage manuel ajouté.");
+    await loadTodayEvents();
+    await loadAllTodayEvents();
+    await loadPeriodEvents();
+  }
+
+  function employeeSegments(employeeEvents) {
+    return buildSegments(employeeEvents);
+  }
+
+  function employeeWorkedMs(employeeEvents) {
+    let total = calculateWorkedMs(employeeEvents);
+
+    const last = employeeEvents[employeeEvents.length - 1];
+    if (last && (last.event_type === "ARRIVAL" || last.event_type === "RESUME")) {
+      total += now - new Date(last.event_time);
+    }
+
+    return total;
+  }
+
+  function employeeCurrentStatus(employeeEvents) {
+    const last = employeeEvents[employeeEvents.length - 1];
+
+    if (!last) return "stopped";
+    if (last.event_type === "ARRIVAL" || last.event_type === "RESUME") return "working";
+    if (last.event_type === "PAUSE") return "paused";
+    return "stopped";
+  }
+
+  const liveEmployeeRows = employees.map((employee) => {
+    const employeeEvents = allTodayEvents.filter((event) => event.employee_id === employee.id);
+    const last = employeeEvents[employeeEvents.length - 1];
+
+    return {
+      employee,
+      events: employeeEvents,
+      status: employeeCurrentStatus(employeeEvents),
+      workedMs: employeeWorkedMs(employeeEvents),
+      last,
+      segments: employeeSegments(employeeEvents),
+    };
+  });
 
   function exportPeriodCsv() {
     const rows = [
@@ -648,6 +845,180 @@ export default function Pointage({ user }) {
               <strong>{formatDuration(elapsedCurrent)}</strong>
             </div>
           </div>
+        )}
+      </div>
+
+      <div className="card">
+        <div className="page-head">
+          <div>
+            <h3>Pointage atelier en direct</h3>
+            <p>Vue globale de tous les employés, connectée à la pointeuse.</p>
+          </div>
+
+          <button className="btn secondary" onClick={loadAllTodayEvents}>
+            Actualiser
+          </button>
+        </div>
+
+        <div className="live-punch-grid">
+          {liveEmployeeRows.map((row) => (
+            <div className={`live-punch-card ${row.status}`} key={row.employee.id}>
+              <div className="live-punch-head">
+                <div>
+                  <strong>{row.employee.name}</strong>
+                  <small>
+                    {row.status === "working" && "🟢 En travail"}
+                    {row.status === "paused" && "🟠 En pause"}
+                    {row.status === "stopped" && "⚪ Arrêté"}
+                  </small>
+                </div>
+                <span>{formatDuration(row.workedMs)}</span>
+              </div>
+
+              {row.last ? (
+                <div className="live-punch-detail">
+                  <small>Dernier pointage : {actionLabel(row.last.event_type)} · {formatDateTime(row.last.event_time)}</small>
+                  <small>Projet : {projectName(row.last.project_id) || "Sans projet"}</small>
+                  <small>Activité : {activityName(row.last.activity_id) || "Sans activité"}</small>
+                </div>
+              ) : (
+                <p>Aucun pointage aujourd'hui.</p>
+              )}
+
+              {row.segments.length > 0 && (
+                <div className="live-punch-segments">
+                  {row.segments.slice(-3).map((segment, index) => (
+                    <small key={`${row.employee.id}-${index}`}>
+                      {formatDateTime(segment.start)} → {formatDateTime(segment.end)} · {formatDuration(segment.ms)}
+                    </small>
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="card">
+        <h3>Correction / ajout manuel</h3>
+        <p>Permet d'ajouter des heures, corriger un oubli, modifier ou supprimer un pointage. Chaque ligne reste modifiable ou supprimable.</p>
+
+        <form className="manual-punch-form" onSubmit={addManualPunchEvent}>
+          <div>
+            <label>Employé</label>
+            <select
+              value={manualForm.employee_id}
+              onChange={(e) => setManualForm({ ...manualForm, employee_id: e.target.value })}
+            >
+              <option value="">Choisir</option>
+              {employees.map((employee) => (
+                <option key={employee.id} value={employee.id}>{employee.name}</option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label>Type</label>
+            <select
+              value={manualForm.event_type}
+              onChange={(e) => setManualForm({ ...manualForm, event_type: e.target.value })}
+            >
+              <option value="ARRIVAL">Démarrage</option>
+              <option value="PAUSE">Pause</option>
+              <option value="RESUME">Reprise</option>
+              <option value="DEPART">Fin</option>
+            </select>
+          </div>
+
+          <div>
+            <label>Date / heure</label>
+            <input
+              type="datetime-local"
+              value={manualForm.event_time}
+              onChange={(e) => setManualForm({ ...manualForm, event_time: e.target.value })}
+            />
+          </div>
+
+          <div>
+            <label>Projet</label>
+            <select
+              value={manualForm.project_id}
+              onChange={(e) => setManualForm({ ...manualForm, project_id: e.target.value })}
+            >
+              <option value="">Sans projet</option>
+              {projects.map((project) => (
+                <option key={project.id} value={project.id}>
+                  {project.project_code ? `${project.project_code} - ` : ""}{project.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label>Activité</label>
+            <select
+              value={manualForm.activity_id}
+              onChange={(e) => setManualForm({ ...manualForm, activity_id: e.target.value })}
+            >
+              <option value="">Choisir</option>
+              {activities.map((activity) => (
+                <option key={activity.id} value={activity.id}>{activity.name}</option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label>Commentaire</label>
+            <input
+              value={manualForm.comment}
+              onChange={(e) => setManualForm({ ...manualForm, comment: e.target.value })}
+              placeholder="Ex : oubli pointage, heures sup..."
+            />
+          </div>
+
+          <button className="btn primary">Ajouter</button>
+        </form>
+
+        <h4>Tous les pointages du jour</h4>
+        {allTodayEvents.length === 0 ? (
+          <p>Aucun pointage aujourd'hui.</p>
+        ) : (
+          <table>
+            <thead>
+              <tr>
+                <th>Employé</th>
+                <th>Heure</th>
+                <th>Action</th>
+                <th>Projet</th>
+                <th>Activité</th>
+                <th>Commentaire</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+
+            <tbody>
+              {allTodayEvents.map((event) => (
+                <tr key={event.id}>
+                  <td>{employeeName(event.employee_id)}</td>
+                  <td>{formatDateTime(event.event_time)}</td>
+                  <td>{actionLabel(event.event_type)}</td>
+                  <td>{projectName(event.project_id) || "Sans projet"}</td>
+                  <td>{activityName(event.activity_id) || "Sans activité"}</td>
+                  <td>{event.comment || "-"}</td>
+                  <td>
+                    <div className="inline-actions">
+                      <button className="btn small" onClick={() => editPunchEvent(event)}>
+                        Modifier
+                      </button>
+                      <button className="btn small danger-soft" onClick={() => deletePunchEvent(event)}>
+                        Supprimer
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         )}
       </div>
 

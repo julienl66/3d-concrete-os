@@ -6554,4 +6554,36 @@ textarea:focus {
 .crm-top-actions {
   flex-wrap: wrap;
 }
+.crm-alerts-grid-extended {
+  grid-template-columns: repeat(4, 1fr);
+}
+
+.crm-alert-card.meetings {
+  border-color: #ddd6fe !important;
+}
+
+.crm-alert-card.quotes {
+  border-color: #bfdbfe !important;
+}
+
+.crm-interaction-form-extended {
+  grid-template-columns: repeat(7, 1fr) auto;
+}
+
+@media (max-width: 1400px) {
+  .crm-alerts-grid-extended {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .crm-interaction-form-extended {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 850px) {
+  .crm-alerts-grid-extended,
+  .crm-interaction-form-extended {
+    grid-template-columns: 1fr;
+  }
+}
 

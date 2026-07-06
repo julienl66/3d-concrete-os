@@ -34,6 +34,9 @@ export default function CRM({ user, permissions }) {
     notes: "",
     next_action: "",
     next_action_date: "",
+    meeting_time: "",
+    meeting_location: "",
+    priority: "normal",
   });
 
   const [stageForm, setStageForm] = useState({
@@ -164,6 +167,22 @@ export default function CRM({ user, permissions }) {
   const overdueAlerts = alerts.filter((alert) => alert.next_action_date < todayValue());
   const todayAlerts = alerts.filter((alert) => alert.next_action_date === todayValue());
 
+  const todayMeetings = interactions
+    .filter((interaction) => {
+      if (interaction.done) return false;
+      if (interaction.interaction_type !== "rdv") return false;
+      const date = interaction.next_action_date || interaction.interaction_date;
+      return date === todayValue();
+    })
+    .sort((a, b) => String(a.meeting_time || "").localeCompare(String(b.meeting_time || "")));
+
+  const quoteActions = alerts.filter((alert) => {
+    const type = String(alert.interaction_type || "").toLowerCase();
+    const subject = String(alert.subject || "").toLowerCase();
+    const action = String(alert.next_action || "").toLowerCase();
+    return type === "devis" || subject.includes("devis") || action.includes("devis");
+  });
+
   const analytics = useMemo(() => {
     const contacted = interactions.filter((i) => ["appel", "email", "rdv", "devis", "relance"].includes(i.interaction_type)).length;
     const meetings = interactions.filter((i) => i.interaction_type === "rdv").length;
@@ -270,6 +289,9 @@ export default function CRM({ user, permissions }) {
         "notes",
         "next_action",
         "next_action_date",
+        "meeting_time",
+        "meeting_location",
+        "priority",
       ],
       [
         "Mairie de Dole",
@@ -283,6 +305,9 @@ export default function CRM({ user, permissions }) {
         "Intéressé par un lettrage",
         "Relancer pour RDV",
         "2026-07-15",
+        "14:30",
+        "Mairie",
+        "high",
       ],
     ];
 
@@ -388,6 +413,9 @@ export default function CRM({ user, permissions }) {
       const nextAction = valueFromRow(row, ["next_action", "action", "relance", "a_faire"]);
       const nextDate = valueFromRow(row, [
         "next_action_date",
+        "meeting_time",
+        "meeting_location",
+        "priority",
         "date_relance",
         "date_action",
         "rappel",
@@ -402,6 +430,9 @@ export default function CRM({ user, permissions }) {
           subject: "Import CSV",
           next_action: nextAction || "Relance",
           next_action_date: nextDate || null,
+          meeting_time: valueFromRow(row, ["meeting_time", "heure_rdv", "heure"]) || null,
+          meeting_location: valueFromRow(row, ["meeting_location", "lieu_rdv", "lieu"]) || null,
+          priority: valueFromRow(row, ["priority", "priorite"]) || "normal",
           created_by: user?.id || null,
         });
       }
@@ -584,6 +615,9 @@ export default function CRM({ user, permissions }) {
       notes: interactionForm.notes || null,
       next_action: interactionForm.next_action || null,
       next_action_date: interactionForm.next_action_date || null,
+      meeting_time: interactionForm.meeting_time || null,
+      meeting_location: interactionForm.meeting_location || null,
+      priority: interactionForm.priority || "normal",
       created_by: user?.id || null,
     });
 
@@ -778,7 +812,7 @@ export default function CRM({ user, permissions }) {
 
       {message && <div className="alert info">{message}</div>}
 
-      <div className="crm-alerts-grid">
+      <div className="crm-alerts-grid crm-alerts-grid-extended">
         <div className="card crm-alert-card overdue">
           <h3>Alertes en retard</h3>
           {overdueAlerts.length === 0 ? (
@@ -797,7 +831,7 @@ export default function CRM({ user, permissions }) {
         </div>
 
         <div className="card crm-alert-card today">
-          <h3>À faire aujourd'hui</h3>
+          <h3>Relances du jour</h3>
           {todayAlerts.length === 0 ? (
             <p>Aucune relance aujourd'hui.</p>
           ) : (
@@ -805,6 +839,43 @@ export default function CRM({ user, permissions }) {
               <div className="crm-alert-row" key={alert.id}>
                 <div>
                   <strong>{alert.next_action || alert.subject || "Action"}</strong>
+                  <small>{alert.next_action_date} · {contacts.find((c) => c.id === alert.contact_id)?.company_name || "-"}</small>
+                </div>
+                <button className="btn small" onClick={() => markAlertDone(alert)}>Traité</button>
+              </div>
+            ))
+          )}
+        </div>
+
+        <div className="card crm-alert-card meetings">
+          <h3>RDV commerciaux du jour</h3>
+          {todayMeetings.length === 0 ? (
+            <p>Aucun RDV commercial aujourd'hui.</p>
+          ) : (
+            todayMeetings.map((meeting) => (
+              <div className="crm-alert-row" key={meeting.id}>
+                <div>
+                  <strong>{meeting.meeting_time ? `${meeting.meeting_time} · ` : ""}{meeting.subject || meeting.next_action || "RDV commercial"}</strong>
+                  <small>
+                    {contacts.find((c) => c.id === meeting.contact_id)?.company_name || "-"}
+                    {meeting.meeting_location ? ` · ${meeting.meeting_location}` : ""}
+                  </small>
+                </div>
+                <button className="btn small" onClick={() => markAlertDone(meeting)}>Traité</button>
+              </div>
+            ))
+          )}
+        </div>
+
+        <div className="card crm-alert-card quotes">
+          <h3>Devis à suivre</h3>
+          {quoteActions.length === 0 ? (
+            <p>Aucun devis à traiter aujourd'hui ou en retard.</p>
+          ) : (
+            quoteActions.map((alert) => (
+              <div className="crm-alert-row" key={alert.id}>
+                <div>
+                  <strong>{alert.next_action || alert.subject || "Suivi devis"}</strong>
                   <small>{alert.next_action_date} · {contacts.find((c) => c.id === alert.contact_id)?.company_name || "-"}</small>
                 </div>
                 <button className="btn small" onClick={() => markAlertDone(alert)}>Traité</button>
@@ -990,7 +1061,7 @@ export default function CRM({ user, permissions }) {
             </div>
           </div>
 
-          <form className="crm-interaction-form" onSubmit={createInteraction}>
+          <form className="crm-interaction-form crm-interaction-form-extended" onSubmit={createInteraction}>
             <div>
               <label>Type</label>
               <select value={interactionForm.interaction_type} onChange={(e) => setInteractionForm({ ...interactionForm, interaction_type: e.target.value })}>
@@ -1011,8 +1082,27 @@ export default function CRM({ user, permissions }) {
             </div>
 
             <div>
-              <label>Date relance</label>
+              <label>Date relance / RDV</label>
               <input type="date" value={interactionForm.next_action_date} onChange={(e) => setInteractionForm({ ...interactionForm, next_action_date: e.target.value })} />
+            </div>
+
+            <div>
+              <label>Heure RDV</label>
+              <input type="time" value={interactionForm.meeting_time} onChange={(e) => setInteractionForm({ ...interactionForm, meeting_time: e.target.value })} />
+            </div>
+
+            <div>
+              <label>Lieu RDV</label>
+              <input value={interactionForm.meeting_location} onChange={(e) => setInteractionForm({ ...interactionForm, meeting_location: e.target.value })} />
+            </div>
+
+            <div>
+              <label>Priorité</label>
+              <select value={interactionForm.priority} onChange={(e) => setInteractionForm({ ...interactionForm, priority: e.target.value })}>
+                <option value="low">Basse</option>
+                <option value="normal">Normale</option>
+                <option value="high">Haute</option>
+              </select>
             </div>
 
             <button className="btn primary">Ajouter interaction</button>
@@ -1025,6 +1115,8 @@ export default function CRM({ user, permissions }) {
                 <small>
                   {interaction.next_action ? `Action : ${interaction.next_action}` : ""}
                   {interaction.next_action_date ? ` · ${interaction.next_action_date}` : ""}
+                  {interaction.meeting_time ? ` · ${interaction.meeting_time}` : ""}
+                  {interaction.meeting_location ? ` · ${interaction.meeting_location}` : ""}
                   {interaction.done ? " · traité" : ""}
                 </small>
                 {interaction.notes && <p>{interaction.notes}</p>}

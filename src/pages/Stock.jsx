@@ -17,14 +17,12 @@ export default function Stock({ user }) {
   const [stockCategories, setStockCategories] = useState([]);
   const [message, setMessage] = useState("");
   const [search, setSearch] = useState("");
-  const [selectedFamily, setSelectedFamily] = useState("all");
   const [selectedCategoryId, setSelectedCategoryId] = useState("all");
   const [expandedGroups, setExpandedGroups] = useState({});
 
   const [form, setForm] = useState({
     reference: "",
     name: "",
-    category: "Matière première",
     category_id: "",
     unit: "kg",
     current_quantity: 0,
@@ -43,7 +41,6 @@ export default function Stock({ user }) {
         .from("stock_items")
         .select("*")
         .eq("active", true)
-        .order("category")
         .order("name"),
       supabase
         .from("projects")
@@ -65,29 +62,27 @@ export default function Stock({ user }) {
       return;
     }
 
-    setItems(itemsResponse.data || []);
+    const loadedItems = itemsResponse.data || [];
+    const loadedCategories = categoriesResponse.data || [];
+
+    setItems(loadedItems);
     setProjects(projectsResponse.data || []);
-    setStockCategories(categoriesResponse.data || []);
+    setStockCategories(loadedCategories);
 
     const defaultExpanded = {};
-    (itemsResponse.data || []).forEach((item) => {
-      defaultExpanded[groupKey(familyOf(item), categoryNameOf(item, categoriesResponse.data || []))] = true;
+    loadedItems.forEach((item) => {
+      defaultExpanded[groupKey(item)] = true;
     });
     setExpandedGroups(defaultExpanded);
   }
 
-  function familyOf(item) {
-    return item.category || item.family || "Sans famille";
-  }
-
-  function categoryNameOf(item, categories = stockCategories) {
-    const category = categories.find((entry) => entry.id === item.category_id);
-
+  function categoryName(item) {
+    const category = stockCategories.find((entry) => entry.id === item.category_id);
     return category?.name || "Sans sous-catégorie";
   }
 
-  function groupKey(family, categoryName) {
-    return `${family}___${categoryName}`;
+  function groupKey(item) {
+    return item.category_id || "none";
   }
 
   function formatMoney(value) {
@@ -117,56 +112,35 @@ export default function Stock({ user }) {
     return minimum > 0 && current <= minimum;
   }
 
-  const families = useMemo(() => {
-    return Array.from(new Set(items.map(familyOf))).sort();
-  }, [items]);
-
-  const filteredCategoryOptions = useMemo(() => {
-    return stockCategories.filter((category) => {
-      if (selectedFamily === "all") return true;
-
-      return items.some(
-        (item) => familyOf(item) === selectedFamily && item.category_id === category.id
-      );
-    });
-  }, [stockCategories, items, selectedFamily]);
-
   const filteredItems = useMemo(() => {
     const query = search.toLowerCase();
 
     return items.filter((item) => {
-      const family = familyOf(item);
-      const categoryName = categoryNameOf(item);
-
       const matchesSearch =
         (item.reference || "").toLowerCase().includes(query) ||
         (item.name || "").toLowerCase().includes(query) ||
-        family.toLowerCase().includes(query) ||
-        categoryName.toLowerCase().includes(query);
+        categoryName(item).toLowerCase().includes(query);
 
-      const matchesFamily = selectedFamily === "all" || family === selectedFamily;
       const matchesCategory =
         selectedCategoryId === "all" ||
         (selectedCategoryId === "none" && !item.category_id) ||
         item.category_id === selectedCategoryId;
 
-      return matchesSearch && matchesFamily && matchesCategory;
+      return matchesSearch && matchesCategory;
     });
-  }, [items, search, selectedFamily, selectedCategoryId, stockCategories]);
+  }, [items, search, selectedCategoryId, stockCategories]);
 
   const groupedStock = useMemo(() => {
     const map = new Map();
 
     filteredItems.forEach((item) => {
-      const family = familyOf(item);
-      const categoryName = categoryNameOf(item);
-      const key = groupKey(family, categoryName);
+      const key = groupKey(item);
+      const name = categoryName(item);
 
       if (!map.has(key)) {
         map.set(key, {
           key,
-          family,
-          categoryName,
+          name,
           items: [],
           value: 0,
           criticalCount: 0,
@@ -182,10 +156,7 @@ export default function Stock({ user }) {
       }
     });
 
-    return Array.from(map.values()).sort((a, b) => {
-      if (a.family === b.family) return a.categoryName.localeCompare(b.categoryName);
-      return a.family.localeCompare(b.family);
-    });
+    return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
   }, [filteredItems, stockCategories]);
 
   const criticalItems = items.filter(isCritical);
@@ -218,7 +189,6 @@ export default function Stock({ user }) {
     const { error } = await supabase.from("stock_items").insert({
       reference: form.reference || null,
       name: form.name,
-      category: form.category || "Matière première",
       category_id: form.category_id || null,
       unit: form.unit || "kg",
       current_quantity: Number(form.current_quantity || 0),
@@ -236,7 +206,6 @@ export default function Stock({ user }) {
     setForm({
       reference: "",
       name: "",
-      category: "Matière première",
       category_id: "",
       unit: "kg",
       current_quantity: 0,
@@ -314,6 +283,53 @@ export default function Stock({ user }) {
     }
 
     setMessage("Stock mis à jour.");
+    loadData();
+  }
+
+  async function editItem(item) {
+    const reference = window.prompt("Référence ?", item.reference || "");
+    if (reference === null) return;
+
+    const name = window.prompt("Désignation ?", item.name || "");
+    if (name === null) return;
+
+    const unit = window.prompt("Unité de stock ? Exemple : kg, unité, litre", item.unit || "kg");
+    if (unit === null) return;
+
+    const list = stockCategories
+      .map((category, index) => `${index + 1}. ${category.name}`)
+      .join("\n");
+
+    const currentIndex = stockCategories.findIndex(
+      (category) => category.id === item.category_id
+    );
+
+    const choice = window.prompt(
+      `Sous-catégorie issue de l'administration :\n0. Aucune\n${list}`,
+      currentIndex >= 0 ? String(currentIndex + 1) : "0"
+    );
+
+    if (choice === null) return;
+
+    const selectedCategory =
+      Number(choice) === 0 ? null : stockCategories[Number(choice) - 1];
+
+    const { error } = await supabase
+      .from("stock_items")
+      .update({
+        reference: reference || null,
+        name: name || "Sans nom",
+        unit: unit || "unité",
+        category_id: selectedCategory?.id || null,
+      })
+      .eq("id", item.id);
+
+    if (error) {
+      setMessage(error.message);
+      return;
+    }
+
+    setMessage("Article modifié.");
     loadData();
   }
 
@@ -401,45 +417,6 @@ export default function Stock({ user }) {
     loadData();
   }
 
-  async function editFamilyAndCategory(item) {
-    const family = window.prompt("Famille / catégorie principale ?", familyOf(item));
-    if (family === null) return;
-
-    const list = stockCategories
-      .map((category, index) => `${index + 1}. ${category.name}`)
-      .join("\n");
-
-    const currentIndex = stockCategories.findIndex(
-      (category) => category.id === item.category_id
-    );
-
-    const choice = window.prompt(
-      `Sous-catégorie issue de l'administration :\n0. Aucune\n${list}`,
-      currentIndex >= 0 ? String(currentIndex + 1) : "0"
-    );
-
-    if (choice === null) return;
-
-    const selectedCategory =
-      Number(choice) === 0 ? null : stockCategories[Number(choice) - 1];
-
-    const { error } = await supabase
-      .from("stock_items")
-      .update({
-        category: family || null,
-        category_id: selectedCategory?.id || null,
-      })
-      .eq("id", item.id);
-
-    if (error) {
-      setMessage(error.message);
-      return;
-    }
-
-    setMessage("Classement stock modifié.");
-    loadData();
-  }
-
   async function archiveItem(item) {
     const ok = window.confirm(`Archiver "${item.name}" ?`);
     if (!ok) return;
@@ -460,12 +437,11 @@ export default function Stock({ user }) {
 
   function exportMissingProducts() {
     const rows = [
-      ["Référence", "Désignation", "Famille", "Sous-catégorie", "Stock actuel", "Stock mini", "Unité", "Prix achat", "Unité prix"],
+      ["Référence", "Désignation", "Sous-catégorie", "Stock actuel", "Stock mini", "Unité", "Prix achat", "Unité prix"],
       ...criticalItems.map((item) => [
         item.reference || "",
         item.name || "",
-        familyOf(item),
-        categoryNameOf(item),
+        categoryName(item),
         item.current_quantity || 0,
         item.minimum_quantity || 0,
         item.unit || "",
@@ -495,7 +471,7 @@ export default function Stock({ user }) {
         <div>
           <p className="eyebrow">Stock</p>
           <h2>Stock & matières</h2>
-          <p>Familles stock + sous-catégories pilotées depuis Administration.</p>
+          <p>Sous-catégories pilotées depuis Administration, sans famille intermédiaire.</p>
         </div>
 
         <button className="btn primary" onClick={exportMissingProducts}>
@@ -541,15 +517,6 @@ export default function Stock({ user }) {
               value={form.name}
               onChange={(e) => setForm({ ...form, name: e.target.value })}
               placeholder="Ex : Ciment gris"
-            />
-          </div>
-
-          <div>
-            <label>Famille</label>
-            <input
-              value={form.category}
-              onChange={(e) => setForm({ ...form, category: e.target.value })}
-              placeholder="Ex : Matière première"
             />
           </div>
 
@@ -640,27 +607,12 @@ export default function Stock({ user }) {
           </div>
         </div>
 
-        <div className="stock-filters">
+        <div className="stock-filters single-category">
           <input
-            placeholder="Rechercher par référence, désignation, famille ou sous-catégorie..."
+            placeholder="Rechercher par référence, désignation ou sous-catégorie..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
-
-          <select
-            value={selectedFamily}
-            onChange={(e) => {
-              setSelectedFamily(e.target.value);
-              setSelectedCategoryId("all");
-            }}
-          >
-            <option value="all">Toutes les familles</option>
-            {families.map((family) => (
-              <option key={family} value={family}>
-                {family}
-              </option>
-            ))}
-          </select>
 
           <select
             value={selectedCategoryId}
@@ -668,7 +620,7 @@ export default function Stock({ user }) {
           >
             <option value="all">Toutes les sous-catégories</option>
             <option value="none">Sans sous-catégorie</option>
-            {filteredCategoryOptions.map((category) => (
+            {stockCategories.map((category) => (
               <option key={category.id} value={category.id}>
                 {category.name}
               </option>
@@ -685,12 +637,11 @@ export default function Stock({ user }) {
 
               return (
                 <div className="stock-group" key={group.key}>
-                  <button className="stock-group-head" type="button" onClick={() => toggleGroup(group.key)}>
+                  <button className="stock-group-head simple" type="button" onClick={() => toggleGroup(group.key)}>
                     <span>{opened ? "▾" : "▸"}</span>
 
                     <div>
-                      <strong>{group.family}</strong>
-                      <small>{group.categoryName}</small>
+                      <strong>{group.name}</strong>
                     </div>
 
                     <div className="stock-group-metrics">
@@ -749,10 +700,10 @@ export default function Stock({ user }) {
                                   <div className="inline-actions">
                                     <button className="btn small" onClick={() => moveStock(item, "in")}>+ Entrée</button>
                                     <button className="btn small" onClick={() => moveStock(item, "out")}>- Sortie</button>
+                                    <button className="btn small" onClick={() => editItem(item)}>Modifier</button>
                                     <button className="btn small" onClick={() => editQuantity(item)}>Qté</button>
                                     <button className="btn small" onClick={() => editMinimum(item)}>Mini</button>
                                     <button className="btn small" onClick={() => editPrice(item)}>Prix</button>
-                                    <button className="btn small" onClick={() => editFamilyAndCategory(item)}>Classement</button>
                                     <button className="btn small danger-soft" onClick={() => archiveItem(item)}>Archiver</button>
                                   </div>
                                 </td>

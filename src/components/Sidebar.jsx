@@ -2,6 +2,7 @@ import { canAccess } from "../services/permissions.js";
 
 const items = [
   { id: "dashboard", label: "Tableau de bord", icon: "🏠" },
+  { id: "bi", label: "Business Intelligence", icon: "📊" },
   { id: "pointage", label: "Pointage", icon: "⏱️" },
   { id: "employes", label: "Employés", icon: "👷" },
   { id: "projets", label: "Projets", icon: "📁" },

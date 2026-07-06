@@ -7,6 +7,7 @@ export const MODULES = [
   { key: "projets", label: "Projets" },
   { key: "chiffrage", label: "Chiffrage" },
   { key: "crm", label: "CRM" },
+  { key: "bi", label: "Business Intelligence" },
   { key: "planning", label: "Planning" },
   { key: "stock", label: "Stock" },
   { key: "couts", label: "Coûts & marges" },
@@ -66,11 +67,12 @@ export function defaultPermissions(role = "employee") {
   }
 
   if (role === "direction") {
-    ["dashboard", "projets", "chiffrage", "crm", "planning", "stock", "couts", "pointage"].forEach((key) => {
+    ["dashboard", "projets", "chiffrage", "crm", "bi", "planning", "stock", "couts", "pointage"].forEach((key) => {
       rights[key] = {
         ...emptyRight(true),
         can_create: true,
         can_edit: true,
+        can_delete: key === "crm" || key === "bi",
         can_validate: key === "projets" || key === "chiffrage",
         can_archive: key === "projets",
         can_restore: key === "projets",
@@ -91,7 +93,7 @@ export function defaultPermissions(role = "employee") {
   }
 
   if (role === "commercial") {
-    ["dashboard", "projets", "chiffrage", "crm", "planning"].forEach((key) => {
+    ["dashboard", "projets", "chiffrage", "crm", "bi", "planning"].forEach((key) => {
       rights[key] = {
         ...emptyRight(true),
         can_create: key === "projets" || key === "chiffrage" || key === "crm",

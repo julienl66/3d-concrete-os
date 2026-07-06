@@ -16,6 +16,8 @@ export default function Projets({ user, permissions }) {
   const [projectProductionPlanning, setProjectProductionPlanning] = useState([]);
   const [projectInstallationPlanning, setProjectInstallationPlanning] = useState([]);
   const [stockItems, setStockItems] = useState([]);
+  const [stockCategories, setStockCategories] = useState([]);
+  const [stockModalCategoryId, setStockModalCategoryId] = useState("all");
   const [activeTab, setActiveTab] = useState("general");
   const [stockModalOpen, setStockModalOpen] = useState(false);
   const [stockSearch, setStockSearch] = useState("");
@@ -126,13 +128,30 @@ export default function Projets({ user, permissions }) {
     setProjectTypes(projectTypesData || []);
     setAnnexCosts(annexCostsData || []);
 
-    const { data: stockItemsData } = await supabase
+    const { data: stockItemsData, error: stockItemsError } = await supabase
       .from("stock_items")
       .select("*")
       .eq("active", true)
       .order("name");
 
+    if (stockItemsError) {
+      setMessage(stockItemsError.message);
+      return;
+    }
+
+    const { data: stockCategoriesData, error: stockCategoriesError } = await supabase
+      .from("stock_categories")
+      .select("*")
+      .eq("active", true)
+      .order("name");
+
+    if (stockCategoriesError) {
+      setMessage(stockCategoriesError.message);
+      return;
+    }
+
     setStockItems(stockItemsData || []);
+    setStockCategories(stockCategoriesData || []);
 
     if (selectedProject) {
       const updated = (projectsData || []).find((p) => p.id === selectedProject.id);
@@ -152,7 +171,7 @@ export default function Projets({ user, permissions }) {
 
     const { data: stockData } = await supabase
       .from("stock_movements")
-      .select("*, stock_items(reference, name, unit, unit_price)")
+      .select("*, stock_items(reference, name, unit, unit_price, price_unit, category_id)")
       .eq("project_id", project.id)
       .order("created_at", { ascending: false });
 
@@ -985,6 +1004,7 @@ export default function Projets({ user, permissions }) {
 
   function openStockModal() {
     setStockSearch("");
+    setStockModalCategoryId("all");
     setStockQuantity(1);
     setStockSelectedItem(null);
     setStockModalOpen(true);
@@ -1177,14 +1197,60 @@ export default function Projets({ user, permissions }) {
     );
   }
 
+  function stockCategoryName(item) {
+    const category = stockCategories.find((entry) => entry.id === item.category_id);
+    return category?.name || "Sans sous-catégorie";
+  }
+
+  function priceUnitLabel(value) {
+    const labels = {
+      unit: "unité",
+      kg: "kg",
+      tonne: "tonne",
+      liter: "litre",
+      meter: "mètre",
+      m2: "m²",
+      m3: "m³",
+    };
+
+    return labels[value] || value || "unité";
+  }
+
+  function normalizedStockUnitCost(item) {
+    const price = Number(item?.unit_price || 0);
+
+    if (item?.price_unit === "tonne") return price / 1000;
+
+    return price;
+  }
+
+  function stockMovementCost(movement) {
+    return Number(movement.quantity || 0) * normalizedStockUnitCost(movement.stock_items);
+  }
+
+  function selectedStockCostPreview() {
+    return Number(stockQuantity || 0) * normalizedStockUnitCost(stockSelectedItem);
+  }
+
+  const projectStockTotal = projectStock
+    .filter((movement) => movement.movement_type === "out")
+    .reduce((sum, movement) => sum + stockMovementCost(movement), 0);
+
   const modalFilteredStockItems = stockItems.filter((item) => {
     const query = stockSearch.toLowerCase();
+    const categoryName = stockCategoryName(item).toLowerCase();
 
-    return (
+    const matchesSearch =
       (item.reference || "").toLowerCase().includes(query) ||
       (item.name || "").toLowerCase().includes(query) ||
-      (item.category || "").toLowerCase().includes(query)
-    );
+      categoryName.includes(query);
+
+    const matchesCategory =
+      stockModalCategoryId === "all" ||
+      (stockModalCategoryId === "none" && !item.category_id) ||
+      item.category_id === stockModalCategoryId;
+
+    return matchesSearch && matchesCategory;
   });
 
   const projectHours = calculateProjectHours(projectEvents);
@@ -1745,12 +1811,17 @@ export default function Projets({ user, permissions }) {
             <div className="card">
               <div className="page-head">
                 <div>
-                  <h3>Stock consommé sur le projet</h3>
-                  <p>Les articles ajoutés ici sont automatiquement retirés du stock général.</p>
+                  <h3>Matériaux consommés sur le projet</h3>
+                  <p>Tu déstockes ici directement depuis la fiche projet. Le coût matière se calcule avec les prix du stock.</p>
+                </div>
+
+                <div className="stock-project-total">
+                  <span>Total matière</span>
+                  <strong>{formatMoney(projectStockTotal)}</strong>
                 </div>
 
                 <button className="btn primary" onClick={openStockModal}>
-                  Ajouter article au projet
+                  + Déstocker un matériau
                 </button>
               </div>
 
@@ -1761,9 +1832,11 @@ export default function Projets({ user, permissions }) {
                   <thead>
                     <tr>
                       <th>Date</th>
+                      <th>Sous-catégorie</th>
                       <th>Article</th>
-                      <th>Mouvement</th>
                       <th>Quantité</th>
+                      <th>Prix unitaire</th>
+                      <th>Coût</th>
                       <th>Action</th>
                     </tr>
                   </thead>
@@ -1772,15 +1845,23 @@ export default function Projets({ user, permissions }) {
                     {projectStock.map((movement) => (
                       <tr key={movement.id}>
                         <td>{formatDateTime(movement.created_at)}</td>
+                        <td>{stockCategoryName(movement.stock_items || {})}</td>
                         <td>
                           <strong>{movement.stock_items?.reference || "-"}</strong>
                           <br />
                           <small>{movement.stock_items?.name || "-"}</small>
                         </td>
-                        <td>{movement.movement_type}</td>
                         <td>
                           {movement.quantity} {movement.stock_items?.unit || ""}
                         </td>
+                        <td>
+                          {formatMoney(normalizedStockUnitCost(movement.stock_items))}
+                          <br />
+                          <small>
+                            Prix saisi : {formatMoney(movement.stock_items?.unit_price)} / {priceUnitLabel(movement.stock_items?.price_unit)}
+                          </small>
+                        </td>
+                        <td>{formatMoney(stockMovementCost(movement))}</td>
                         <td>
                           <button
                             className="btn small danger-soft"
@@ -2060,11 +2141,26 @@ export default function Projets({ user, permissions }) {
               </button>
             </div>
 
-            <input
-              placeholder="Rechercher une référence ou une désignation..."
-              value={stockSearch}
-              onChange={(e) => setStockSearch(e.target.value)}
-            />
+            <div className="project-stock-modal-filters">
+              <input
+                placeholder="Rechercher une référence, désignation ou sous-catégorie..."
+                value={stockSearch}
+                onChange={(e) => setStockSearch(e.target.value)}
+              />
+
+              <select
+                value={stockModalCategoryId}
+                onChange={(e) => setStockModalCategoryId(e.target.value)}
+              >
+                <option value="all">Toutes les sous-catégories</option>
+                <option value="none">Sans sous-catégorie</option>
+                {stockCategories.map((category) => (
+                  <option key={category.id} value={category.id}>
+                    {category.name}
+                  </option>
+                ))}
+              </select>
+            </div>
 
             <div className="stock-picker-list">
               {modalFilteredStockItems.map((item) => (
@@ -2076,10 +2172,14 @@ export default function Projets({ user, permissions }) {
                   <span>
                     <strong>{item.reference || "-"}</strong>
                     <small>{item.name}</small>
+                    <small>{stockCategoryName(item)}</small>
                   </span>
 
                   <span>
                     {item.current_quantity || 0} {item.unit || ""}
+                    <small>
+                      {formatMoney(normalizedStockUnitCost(item))} / {item.unit || "unité"}
+                    </small>
                   </span>
                 </button>
               ))}
@@ -2096,8 +2196,13 @@ export default function Projets({ user, permissions }) {
                 />
               </div>
 
+              <div className="stock-project-preview">
+                <span>Coût estimé</span>
+                <strong>{formatMoney(selectedStockCostPreview())}</strong>
+              </div>
+
               <button className="btn primary" onClick={() => addSelectedStockToProject(selectedProject)}>
-                Ajouter au projet
+                Déstocker sur ce projet
               </button>
             </div>
           </div>

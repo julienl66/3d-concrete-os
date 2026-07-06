@@ -8,6 +8,7 @@ export default function Administration({ user }) {
   const [workflowTemplates, setWorkflowTemplates] = useState([]);
   const [workflowSteps, setWorkflowSteps] = useState([]);
   const [resources, setResources] = useState([]);
+  const [biSettings, setBiSettings] = useState([]);
   const [selectedTemplateId, setSelectedTemplateId] = useState("");
   const [message, setMessage] = useState("");
 
@@ -50,7 +51,39 @@ export default function Administration({ user }) {
   }, [workflowTemplates, selectedTemplateId]);
 
   async function loadData() {
-    await Promise.all([loadActivities(), loadStockCategories(), loadTaskTypes(), loadWorkflowTemplates(), loadWorkflowSteps(), loadResources()]);
+    await Promise.all([loadActivities(), loadStockCategories(), loadTaskTypes(), loadWorkflowTemplates(), loadWorkflowSteps(), loadResources(), loadBiSettings()]);
+  }
+
+  async function loadBiSettings() {
+    const { data, error } = await supabase
+      .from("bi_settings")
+      .select("*")
+      .order("setting_order");
+
+    if (error) {
+      setMessage(error.message);
+      return;
+    }
+
+    setBiSettings(data || []);
+  }
+
+  async function updateBiSetting(setting) {
+    const value = window.prompt(setting.label || setting.setting_key, setting.setting_value || "");
+    if (value === null) return;
+
+    const { error } = await supabase
+      .from("bi_settings")
+      .update({ setting_value: value })
+      .eq("id", setting.id);
+
+    if (error) {
+      setMessage(error.message);
+      return;
+    }
+
+    setMessage("Objectif BI modifié.");
+    loadBiSettings();
   }
 
   async function loadActivities() {
@@ -702,6 +735,38 @@ export default function Administration({ user }) {
           <span>Ressources atelier</span>
           <strong>{resources.length}</strong>
         </div>
+
+        <div className="stat-card accent">
+          <span>Objectifs BI</span>
+          <strong>{biSettings.length}</strong>
+        </div>
+      </div>
+
+      <div className="card">
+        <h3>Objectifs Business Intelligence</h3>
+        <p>Ces valeurs pilotent les objectifs de CA, pipeline, marge, production et calculs de l'indice 3D Concrete.</p>
+
+        {biSettings.length === 0 ? (
+          <p>Aucun objectif BI configuré.</p>
+        ) : (
+          <div className="admin-list">
+            {biSettings.map((setting) => (
+              <div className="admin-row" key={setting.id}>
+                <div>
+                  <strong>{setting.label || setting.setting_key}</strong>
+                  <small>{setting.description || setting.setting_key}</small>
+                </div>
+
+                <div className="inline-actions">
+                  <strong>{setting.setting_value}</strong>
+                  <button className="btn small" onClick={() => updateBiSetting(setting)}>
+                    Modifier
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       <div className="admin-grid">

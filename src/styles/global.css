@@ -7015,3 +7015,10 @@ textarea:focus {
   }
 }
 
+.admin-row small {
+  display: block;
+  margin-top: 4px;
+  color: #64748b;
+  font-weight: 800;
+}
+

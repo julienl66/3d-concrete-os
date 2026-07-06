@@ -32,12 +32,14 @@ export default function BusinessIntelligence({ user, permissions }) {
   const [projects, setProjects] = useState([]);
   const [crmContacts, setCrmContacts] = useState([]);
   const [crmStages, setCrmStages] = useState([]);
+  const [crmInteractions, setCrmInteractions] = useState([]);
   const [quotes, setQuotes] = useState([]);
   const [stockItems, setStockItems] = useState([]);
   const [punchEvents, setPunchEvents] = useState([]);
   const [revenueEntries, setRevenueEntries] = useState([]);
   const [costEntries, setCostEntries] = useState([]);
   const [widgets, setWidgets] = useState([]);
+  const [settings, setSettings] = useState({});
   const [message, setMessage] = useState("");
   const [period, setPeriod] = useState("year");
   const [view, setView] = useState("direction");
@@ -63,28 +65,33 @@ export default function BusinessIntelligence({ user, permissions }) {
       projectsResponse,
       crmContactsResponse,
       crmStagesResponse,
+      crmInteractionsResponse,
       quotesResponse,
       stockResponse,
       punchResponse,
       revenueResponse,
       costResponse,
       widgetsResponse,
+      settingsResponse,
     ] = await Promise.all([
       supabase.from("projects").select("*").order("created_at", { ascending: false }),
       supabase.from("crm_contacts").select("*").order("created_at", { ascending: false }),
       supabase.from("crm_pipeline_stages").select("*").eq("active", true).order("stage_order"),
+      supabase.from("crm_interactions").select("*").order("created_at", { ascending: false }),
       supabase.from("quote_estimations").select("*").order("created_at", { ascending: false }),
       supabase.from("stock_items").select("*").eq("active", true),
       supabase.from("punch_events").select("*").order("event_time", { ascending: true }),
       supabase.from("revenue_entries").select("*").order("entry_date", { ascending: false }),
       supabase.from("project_cost_entries").select("*").order("cost_date", { ascending: false }),
       supabase.from("bi_widgets").select("*").eq("active", true).order("position_order"),
+      supabase.from("bi_settings").select("*"),
     ]);
 
     const error =
       projectsResponse.error ||
       crmContactsResponse.error ||
       crmStagesResponse.error ||
+      crmInteractionsResponse.error ||
       quotesResponse.error ||
       stockResponse.error ||
       punchResponse.error ||
@@ -99,6 +106,7 @@ export default function BusinessIntelligence({ user, permissions }) {
     setProjects(projectsResponse.data || []);
     setCrmContacts(crmContactsResponse.data || []);
     setCrmStages(crmStagesResponse.data || []);
+    setCrmInteractions(crmInteractionsResponse.data || []);
     setQuotes(quotesResponse.data || []);
     setStockItems(stockResponse.data || []);
     setPunchEvents(punchResponse.data || []);
@@ -111,6 +119,14 @@ export default function BusinessIntelligence({ user, permissions }) {
       setWidgets(DEFAULT_WIDGETS);
     } else {
       setWidgets(widgetsResponse.data || []);
+    }
+
+    if (!settingsResponse.error) {
+      const nextSettings = {};
+      (settingsResponse.data || []).forEach((setting) => {
+        nextSettings[setting.setting_key] = setting.setting_value;
+      });
+      setSettings(nextSettings);
     }
   }
 
@@ -255,14 +271,66 @@ export default function BusinessIntelligence({ user, permissions }) {
     return formatNumber(value);
   }
 
-  const goal = 2000000;
+  function settingNumber(key, fallback) {
+    const value = Number(settings[key]);
+    return Number.isFinite(value) && value > 0 ? value : fallback;
+  }
+
+  const goal = settingNumber("annual_revenue_goal", 2000000);
+  const pipelineGoal = settingNumber("pipeline_goal", 5000000);
+  const rdvGoal = settingNumber("monthly_rdv_goal", 10);
+  const quoteGoal = settingNumber("monthly_quote_goal", 8);
+  const marginGoal = settingNumber("target_margin_rate", 35);
+  const productionHoursGoal = settingNumber("monthly_production_hours_goal", 300);
+
   const goalProgress = Math.min(100, goal > 0 ? (totalRevenue / goal) * 100 : 0);
 
-  const commercialScore = Math.min(100, crmContacts.length * 2 + quotes.length * 3);
-  const productionScore = Math.min(100, workedHours / 20);
-  const financeScore = Math.min(100, averageMargin * 2);
-  const stockScore = Math.min(100, stockItems.filter((item) => Number(item.current_quantity || 0) > Number(item.minimum_quantity || 0)).length / Math.max(1, stockItems.length) * 100);
-  const globalScore = Math.round((commercialScore + productionScore + financeScore + stockScore) / 4);
+  const periodInteractions = crmInteractions.filter((interaction) =>
+    isInPeriod(interaction.interaction_date || interaction.created_at || interaction.next_action_date)
+  );
+
+  const rdvCount = periodInteractions.filter((interaction) => interaction.interaction_type === "rdv").length;
+  const devisCount = periodInteractions.filter((interaction) => interaction.interaction_type === "devis").length;
+  const signedStages = crmStages.filter((stage) => String(stage.name || "").toLowerCase().includes("gagn"));
+  const signedContacts = crmContacts.filter((contact) =>
+    signedStages.some((stage) => stage.id === contact.stage_id)
+  ).length;
+  const overdueRelances = crmInteractions.filter((interaction) => {
+    if (interaction.done) return false;
+    if (!interaction.next_action_date) return false;
+    return new Date(interaction.next_action_date) < new Date(new Date().toISOString().slice(0, 10));
+  }).length;
+
+  const commercialScore = Math.max(0, Math.min(100,
+    (crmPipeline + quotePipeline) / pipelineGoal * 35 +
+    rdvCount / rdvGoal * 20 +
+    devisCount / quoteGoal * 20 +
+    signedContacts * 5 -
+    overdueRelances * 3
+  ));
+
+  const productionScore = Math.max(0, Math.min(100,
+    workedHours / productionHoursGoal * 55 +
+    activeProjects.length * 3
+  ));
+
+  const financeScore = Math.max(0, Math.min(100,
+    goalProgress * 0.55 +
+    (averageMargin / marginGoal) * 45
+  ));
+
+  const healthyStockRatio =
+    stockItems.filter((item) => Number(item.current_quantity || 0) > Number(item.minimum_quantity || 0)).length /
+    Math.max(1, stockItems.length);
+
+  const stockScore = Math.max(0, Math.min(100, healthyStockRatio * 100));
+
+  const globalScore = Math.round(
+    commercialScore * 0.35 +
+    productionScore * 0.25 +
+    financeScore * 0.30 +
+    stockScore * 0.10
+  );
 
   const monthlyRevenue = useMemo(() => {
     const year = new Date().getFullYear();
@@ -405,9 +473,8 @@ export default function BusinessIntelligence({ user, permissions }) {
           <span>Indice 3D Concrete</span>
           <strong>{globalScore} / 100</strong>
           <p>
-            {globalScore >= 80 && "Entreprise en forte dynamique."}
-            {globalScore >= 55 && globalScore < 80 && "Croissance correcte, points d'attention à suivre."}
-            {globalScore < 55 && "Pilotage à renforcer sur les indicateurs clés."}
+            Score pondéré : commercial 35 %, finance 30 %, production 25 %, stock 10 %.
+            Les relances en retard pénalisent le score commercial.
           </p>
         </div>
 

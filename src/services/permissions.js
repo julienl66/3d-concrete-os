@@ -6,6 +6,7 @@ export const MODULES = [
   { key: "employes", label: "Employés / droits" },
   { key: "projets", label: "Projets" },
   { key: "chiffrage", label: "Chiffrage" },
+  { key: "crm", label: "CRM" },
   { key: "planning", label: "Planning" },
   { key: "stock", label: "Stock" },
   { key: "couts", label: "Coûts & marges" },
@@ -65,19 +66,17 @@ export function defaultPermissions(role = "employee") {
   }
 
   if (role === "direction") {
-    ["dashboard", "projets", "chiffrage", "planning", "stock", "couts", "pointage"].forEach(
-      (key) => {
-        rights[key] = {
-          ...emptyRight(true),
-          can_create: true,
-          can_edit: true,
-          can_validate: key === "projets" || key === "chiffrage",
-          can_archive: key === "projets",
-          can_restore: key === "projets",
-          can_export: true,
-        };
-      }
-    );
+    ["dashboard", "projets", "chiffrage", "crm", "planning", "stock", "couts", "pointage"].forEach((key) => {
+      rights[key] = {
+        ...emptyRight(true),
+        can_create: true,
+        can_edit: true,
+        can_validate: key === "projets" || key === "chiffrage",
+        can_archive: key === "projets",
+        can_restore: key === "projets",
+        can_export: true,
+      };
+    });
   }
 
   if (role === "atelier") {
@@ -92,11 +91,12 @@ export function defaultPermissions(role = "employee") {
   }
 
   if (role === "commercial") {
-    ["dashboard", "projets", "chiffrage", "planning"].forEach((key) => {
+    ["dashboard", "projets", "chiffrage", "crm", "planning"].forEach((key) => {
       rights[key] = {
         ...emptyRight(true),
-        can_create: key === "projets" || key === "chiffrage",
-        can_edit: key === "projets" || key === "chiffrage",
+        can_create: key === "projets" || key === "chiffrage" || key === "crm",
+        can_edit: key === "projets" || key === "chiffrage" || key === "crm",
+        can_delete: key === "crm",
         can_validate: key === "chiffrage",
         can_export: true,
       };

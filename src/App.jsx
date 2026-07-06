@@ -9,6 +9,7 @@ import Stock from "./pages/Stock.jsx";
 import Administration from "./pages/Administration.jsx";
 import Couts from "./pages/Couts.jsx";
 import Chiffrage from "./pages/Chiffrage.jsx";
+import CRM from "./pages/CRM.jsx";
 import Sidebar from "./components/Sidebar.jsx";
 import Header from "./components/Header.jsx";
 import { canAccess, loadEmployeePermissions } from "./services/permissions.js";
@@ -23,6 +24,7 @@ const pages = {
   administration: Administration,
   couts: Couts,
   chiffrage: Chiffrage,
+  crm: CRM,
 };
 
 function App() {

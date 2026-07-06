@@ -183,6 +183,246 @@ export default function CRM({ user, permissions }) {
 
   const maxAnalytics = Math.max(...analytics.map((item) => item.value), 1);
 
+  function normalizeCsvHeader(value) {
+    return String(value || "")
+      .trim()
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replaceAll(" ", "_")
+      .replaceAll("-", "_");
+  }
+
+  function splitCsvLine(line, separator) {
+    const cells = [];
+    let current = "";
+    let quoted = false;
+
+    for (let index = 0; index < line.length; index += 1) {
+      const char = line[index];
+      const nextChar = line[index + 1];
+
+      if (char === '"' && quoted && nextChar === '"') {
+        current += '"';
+        index += 1;
+        continue;
+      }
+
+      if (char === '"') {
+        quoted = !quoted;
+        continue;
+      }
+
+      if (char === separator && !quoted) {
+        cells.push(current.trim());
+        current = "";
+        continue;
+      }
+
+      current += char;
+    }
+
+    cells.push(current.trim());
+    return cells;
+  }
+
+  function parseCsv(text) {
+    const cleanText = String(text || "").replace(/^\uFEFF/, "");
+    const lines = cleanText
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+
+    if (lines.length < 2) return [];
+
+    const firstLine = lines[0];
+    const separator = firstLine.includes(";") ? ";" : ",";
+    const headers = splitCsvLine(firstLine, separator).map(normalizeCsvHeader);
+
+    return lines.slice(1).map((line) => {
+      const values = splitCsvLine(line, separator);
+      const row = {};
+
+      headers.forEach((header, index) => {
+        row[header] = values[index] || "";
+      });
+
+      return row;
+    });
+  }
+
+  function valueFromRow(row, possibleKeys) {
+    const key = possibleKeys.find((item) => row[item] !== undefined);
+    return key ? row[key] : "";
+  }
+
+  function downloadCsvTemplate() {
+    const rows = [
+      [
+        "company_name",
+        "contact_name",
+        "email",
+        "phone",
+        "city",
+        "contact_type",
+        "stage",
+        "assigned_to",
+        "notes",
+        "next_action",
+        "next_action_date",
+      ],
+      [
+        "Mairie de Dole",
+        "Jean Dupont",
+        "contact@dole.fr",
+        "0102030405",
+        "Dole",
+        "prospect",
+        "Contacté",
+        "Julien",
+        "Intéressé par un lettrage",
+        "Relancer pour RDV",
+        "2026-07-15",
+      ],
+    ];
+
+    const csv = rows
+      .map((row) => row.map((cell) => `"${String(cell).replaceAll('"', '""')}"`).join(";"))
+      .join("\n");
+
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+
+    link.href = url;
+    link.download = "modele_import_crm.csv";
+    link.click();
+
+    URL.revokeObjectURL(url);
+  }
+
+  async function importCsvFile(event) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+
+    if (!file) return;
+
+    if (!can("can_create")) {
+      setMessage("Action non autorisée.");
+      return;
+    }
+
+    const text = await file.text();
+    const rows = parseCsv(text);
+
+    if (rows.length === 0) {
+      setMessage("CSV vide ou format invalide.");
+      return;
+    }
+
+    const firstStage = stages[0];
+
+    const contactsToInsert = rows
+      .map((row) => {
+        const companyName = valueFromRow(row, [
+          "company_name",
+          "societe",
+          "entreprise",
+          "client",
+          "nom_client",
+          "company",
+        ]);
+
+        if (!companyName) return null;
+
+        const stageLabel = valueFromRow(row, ["stage", "etape", "statut"]);
+        const stage = stages.find(
+          (item) => item.name.toLowerCase() === String(stageLabel || "").toLowerCase()
+        );
+
+        const assignedLabel = valueFromRow(row, [
+          "assigned_to",
+          "commercial",
+          "responsable",
+          "affecte_a",
+        ]);
+
+        const employee = employees.find(
+          (item) => item.name.toLowerCase() === String(assignedLabel || "").toLowerCase()
+        );
+
+        return {
+          company_name: companyName,
+          contact_name: valueFromRow(row, ["contact_name", "contact", "nom_contact"]) || null,
+          email: valueFromRow(row, ["email", "mail", "courriel"]) || null,
+          phone: valueFromRow(row, ["phone", "telephone", "tel", "mobile"]) || null,
+          city: valueFromRow(row, ["city", "ville", "commune"]) || null,
+          contact_type: valueFromRow(row, ["contact_type", "type"]) || "prospect",
+          notes: valueFromRow(row, ["notes", "note", "commentaire", "commentaires"]) || null,
+          stage_id: stage?.id || firstStage?.id || null,
+          assigned_to: employee?.id || null,
+          status: "active",
+          created_by: user?.id || null,
+        };
+      })
+      .filter(Boolean);
+
+    if (contactsToInsert.length === 0) {
+      setMessage("Aucun contact importable. Vérifie la colonne company_name / client / société.");
+      return;
+    }
+
+    const { data: insertedContacts, error } = await supabase
+      .from("crm_contacts")
+      .insert(contactsToInsert)
+      .select();
+
+    if (error) {
+      setMessage(error.message);
+      return;
+    }
+
+    const actionsToInsert = [];
+
+    rows.forEach((row, index) => {
+      const nextAction = valueFromRow(row, ["next_action", "action", "relance", "a_faire"]);
+      const nextDate = valueFromRow(row, [
+        "next_action_date",
+        "date_relance",
+        "date_action",
+        "rappel",
+      ]);
+
+      const contact = insertedContacts?.[index];
+
+      if (contact && (nextAction || nextDate)) {
+        actionsToInsert.push({
+          contact_id: contact.id,
+          interaction_type: "relance",
+          subject: "Import CSV",
+          next_action: nextAction || "Relance",
+          next_action_date: nextDate || null,
+          created_by: user?.id || null,
+        });
+      }
+    });
+
+    if (actionsToInsert.length > 0) {
+      const { error: actionError } = await supabase
+        .from("crm_interactions")
+        .insert(actionsToInsert);
+
+      if (actionError) {
+        setMessage(`Contacts importés, mais erreur relances : ${actionError.message}`);
+        await loadData();
+        return;
+      }
+    }
+
+    setMessage(`${contactsToInsert.length} contact(s) importé(s).`);
+    await loadData();
+  }
+
   async function createContact(e) {
     e.preventDefault();
 
@@ -514,7 +754,16 @@ export default function CRM({ user, permissions }) {
           <p>Pipeline commercial, relances et performance commerciale.</p>
         </div>
 
-        <div className="inline-actions">
+        <div className="inline-actions crm-top-actions">
+          <label className="btn small crm-import-button">
+            Import CSV
+            <input type="file" accept=".csv,text/csv" onChange={importCsvFile} />
+          </label>
+
+          <button className="btn small" onClick={downloadCsvTemplate}>
+            Modèle CSV
+          </button>
+
           <button className={viewMode === "board" ? "btn primary" : "btn small"} onClick={() => setViewMode("board")}>
             Board
           </button>

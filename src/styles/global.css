@@ -6538,3 +6538,20 @@ textarea:focus {
     grid-template-columns: 1fr;
   }
 }
+.crm-import-button {
+  position: relative;
+  overflow: hidden;
+  cursor: pointer;
+}
+
+.crm-import-button input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.crm-top-actions {
+  flex-wrap: wrap;
+}
+

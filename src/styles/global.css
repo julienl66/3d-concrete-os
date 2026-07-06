@@ -6239,3 +6239,90 @@ textarea:focus {
     grid-template-columns: 1fr;
   }
 }
+.quote-mode-switch {
+  display: inline-flex;
+  border-radius: 18px;
+  background: #f1f5f9;
+  padding: 5px;
+  margin-bottom: 16px;
+}
+
+.quote-mode-switch button {
+  border: 0;
+  border-radius: 14px;
+  padding: 10px 14px;
+  background: transparent;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.quote-mode-switch button.active {
+  background: #111827;
+  color: white;
+}
+
+.quote-stock-picker {
+  display: grid;
+  grid-template-columns: 1fr 260px;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.quote-stock-results {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 8px;
+}
+
+.quote-stock-results button {
+  border: 1px solid #e5e7eb;
+  border-radius: 16px;
+  background: white;
+  text-align: left;
+  padding: 12px;
+  cursor: pointer;
+}
+
+.quote-stock-results strong,
+.quote-stock-results small {
+  display: block;
+}
+
+.quote-stock-results small {
+  margin-top: 4px;
+  color: #64748b;
+  font-weight: 800;
+}
+
+.quote-list button {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+  align-items: center;
+}
+
+.quote-list-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.quote-list-actions span {
+  border-radius: 999px;
+  padding: 6px 8px;
+  background: #f1f5f9;
+  color: #111827;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.quote-list-actions span:last-child {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+
+@media (max-width: 900px) {
+  .quote-stock-picker {
+    grid-template-columns: 1fr;
+  }
+}

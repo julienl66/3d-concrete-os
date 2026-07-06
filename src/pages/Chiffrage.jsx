@@ -4,21 +4,28 @@ import { canAccess } from "../services/permissions.js";
 
 const DEFAULT_CATEGORIES = [
   "Béton imprimé",
+  "Matière première",
   "Main d'œuvre",
   "Robot",
   "Finition",
   "Armatures",
   "Transport",
   "Pose",
+  "Sous-traitance",
   "Divers",
 ];
 
 export default function Chiffrage({ user, permissions }) {
   const [projectTypes, setProjectTypes] = useState([]);
   const [quotes, setQuotes] = useState([]);
+  const [stockItems, setStockItems] = useState([]);
+  const [stockCategories, setStockCategories] = useState([]);
   const [selectedQuoteId, setSelectedQuoteId] = useState("");
   const [lines, setLines] = useState([]);
   const [message, setMessage] = useState("");
+  const [lineMode, setLineMode] = useState("free");
+  const [stockSearch, setStockSearch] = useState("");
+  const [stockCategoryId, setStockCategoryId] = useState("all");
 
   const [quoteForm, setQuoteForm] = useState({
     client_name: "",
@@ -30,6 +37,7 @@ export default function Chiffrage({ user, permissions }) {
   });
 
   const [lineForm, setLineForm] = useState({
+    stock_item_id: "",
     category: "Béton imprimé",
     label: "Béton imprimé",
     quantity: 1,
@@ -42,12 +50,18 @@ export default function Chiffrage({ user, permissions }) {
   }, []);
 
   async function loadData() {
-    const [quotesResponse, projectTypesResponse] = await Promise.all([
+    const [quotesResponse, projectTypesResponse, stockItemsResponse, stockCategoriesResponse] = await Promise.all([
       supabase.from("quote_estimations").select("*").order("created_at", { ascending: false }),
       supabase.from("project_types").select("*").eq("active", true).order("name"),
+      supabase.from("stock_items").select("*").eq("active", true).order("name"),
+      supabase.from("stock_categories").select("*").eq("active", true).order("name"),
     ]);
 
-    const error = quotesResponse.error || projectTypesResponse.error;
+    const error =
+      quotesResponse.error ||
+      projectTypesResponse.error ||
+      stockItemsResponse.error ||
+      stockCategoriesResponse.error;
 
     if (error) {
       setMessage(error.message);
@@ -56,6 +70,8 @@ export default function Chiffrage({ user, permissions }) {
 
     setQuotes(quotesResponse.data || []);
     setProjectTypes(projectTypesResponse.data || []);
+    setStockItems(stockItemsResponse.data || []);
+    setStockCategories(stockCategoriesResponse.data || []);
 
     const selectedId = selectedQuoteId || quotesResponse.data?.[0]?.id || "";
     setSelectedQuoteId(selectedId);
@@ -70,7 +86,7 @@ export default function Chiffrage({ user, permissions }) {
   async function loadLines(quoteId) {
     const { data, error } = await supabase
       .from("quote_estimation_lines")
-      .select("*")
+      .select("*, stock_items(reference, name, unit, unit_price, price_unit, category_id)")
       .eq("quote_id", quoteId)
       .order("created_at", { ascending: true });
 
@@ -90,18 +106,78 @@ export default function Chiffrage({ user, permissions }) {
     return `${Number(value || 0).toLocaleString("fr-FR", { maximumFractionDigits: 2 })} €`;
   }
 
+  function stockCategoryName(item) {
+    const category = stockCategories.find((entry) => entry.id === item?.category_id);
+    return category?.name || "Sans sous-catégorie";
+  }
+
+  function priceUnitLabel(value) {
+    const labels = {
+      unit: "unité",
+      kg: "kg",
+      tonne: "tonne",
+      liter: "litre",
+      meter: "mètre",
+      m2: "m²",
+      m3: "m³",
+    };
+
+    return labels[value] || value || "unité";
+  }
+
+  function normalizedStockUnitCost(item) {
+    const price = Number(item?.unit_price || 0);
+
+    if (item?.price_unit === "tonne") return price / 1000;
+
+    return price;
+  }
+
+  function applyStockItem(item) {
+    setLineForm({
+      stock_item_id: item.id,
+      category: stockCategoryName(item),
+      label: `${item.reference ? `${item.reference} - ` : ""}${item.name}`,
+      quantity: lineForm.quantity || 1,
+      unit: item.unit || "unité",
+      unit_price: normalizedStockUnitCost(item),
+    });
+  }
+
   const selectedQuote = quotes.find((quote) => quote.id === selectedQuoteId);
   const totalCost = lines.reduce((sum, line) => sum + Number(line.amount || 0), 0);
   const marginRate = Number(selectedQuote?.margin_rate || quoteForm.margin_rate || 0);
   const sellingPrice = totalCost * (1 + marginRate / 100);
   const marginAmount = sellingPrice - totalCost;
 
+  const filteredStockItems = useMemo(() => {
+    const query = stockSearch.toLowerCase();
+
+    return stockItems.filter((item) => {
+      const categoryName = stockCategoryName(item).toLowerCase();
+
+      const matchesSearch =
+        (item.reference || "").toLowerCase().includes(query) ||
+        (item.name || "").toLowerCase().includes(query) ||
+        categoryName.includes(query);
+
+      const matchesCategory =
+        stockCategoryId === "all" ||
+        (stockCategoryId === "none" && !item.category_id) ||
+        item.category_id === stockCategoryId;
+
+      return matchesSearch && matchesCategory;
+    });
+  }, [stockItems, stockSearch, stockCategoryId, stockCategories]);
+
   const totalsByCategory = useMemo(() => {
     const map = new Map();
+
     lines.forEach((line) => {
       const key = line.category || "Divers";
       map.set(key, (map.get(key) || 0) + Number(line.amount || 0));
     });
+
     return Array.from(map.entries()).map(([category, amount]) => ({ category, amount }));
   }, [lines]);
 
@@ -167,7 +243,10 @@ export default function Chiffrage({ user, permissions }) {
       [field]: field === "margin_rate" ? Number(String(value).replace(",", ".")) || 0 : value || null,
     };
 
-    const { error } = await supabase.from("quote_estimations").update(patch).eq("id", selectedQuote.id);
+    const { error } = await supabase
+      .from("quote_estimations")
+      .update(patch)
+      .eq("id", selectedQuote.id);
 
     if (error) {
       setMessage(error.message);
@@ -175,6 +254,95 @@ export default function Chiffrage({ user, permissions }) {
     }
 
     setMessage("Chiffrage modifié.");
+    await loadData();
+  }
+
+  async function deleteQuote(quote) {
+    if (!can("can_delete")) {
+      setMessage("Action non autorisée.");
+      return;
+    }
+
+    const ok = window.confirm(`Supprimer définitivement le chiffrage "${quote.project_name}" ?`);
+    if (!ok) return;
+
+    const { error } = await supabase
+      .from("quote_estimations")
+      .delete()
+      .eq("id", quote.id);
+
+    if (error) {
+      setMessage(error.message);
+      return;
+    }
+
+    if (selectedQuoteId === quote.id) {
+      setSelectedQuoteId("");
+      setLines([]);
+    }
+
+    setMessage("Chiffrage supprimé.");
+    await loadData();
+  }
+
+  async function duplicateQuote(quote) {
+    if (!can("can_create")) {
+      setMessage("Action non autorisée.");
+      return;
+    }
+
+    const { data: newQuote, error: quoteError } = await supabase
+      .from("quote_estimations")
+      .insert({
+        client_name: quote.client_name,
+        project_name: `${quote.project_name} - copie`,
+        project_type_id: quote.project_type_id || null,
+        description: quote.description || null,
+        delivery_date: quote.delivery_date || null,
+        margin_rate: Number(quote.margin_rate || 0),
+        status: "draft",
+        created_by: user?.id || null,
+      })
+      .select()
+      .single();
+
+    if (quoteError) {
+      setMessage(quoteError.message);
+      return;
+    }
+
+    const { data: oldLines, error: linesError } = await supabase
+      .from("quote_estimation_lines")
+      .select("*")
+      .eq("quote_id", quote.id);
+
+    if (linesError) {
+      setMessage(linesError.message);
+      return;
+    }
+
+    if ((oldLines || []).length > 0) {
+      const rows = oldLines.map((line) => ({
+        quote_id: newQuote.id,
+        stock_item_id: line.stock_item_id || null,
+        category: line.category || "Divers",
+        label: line.label,
+        quantity: line.quantity,
+        unit: line.unit,
+        unit_price: line.unit_price,
+        amount: line.amount,
+      }));
+
+      const { error: insertError } = await supabase.from("quote_estimation_lines").insert(rows);
+
+      if (insertError) {
+        setMessage(insertError.message);
+        return;
+      }
+    }
+
+    setSelectedQuoteId(newQuote.id);
+    setMessage("Chiffrage dupliqué.");
     await loadData();
   }
 
@@ -201,6 +369,7 @@ export default function Chiffrage({ user, permissions }) {
 
     const { error } = await supabase.from("quote_estimation_lines").insert({
       quote_id: selectedQuoteId,
+      stock_item_id: lineMode === "stock" ? lineForm.stock_item_id || null : null,
       category: lineForm.category || "Divers",
       label: lineForm.label,
       quantity,
@@ -215,6 +384,7 @@ export default function Chiffrage({ user, permissions }) {
     }
 
     setLineForm({
+      stock_item_id: "",
       category: lineForm.category || "Divers",
       label: "",
       quantity: 1,
@@ -280,7 +450,10 @@ export default function Chiffrage({ user, permissions }) {
     const ok = window.confirm(`Supprimer "${line.label}" ?`);
     if (!ok) return;
 
-    const { error } = await supabase.from("quote_estimation_lines").delete().eq("id", line.id);
+    const { error } = await supabase
+      .from("quote_estimation_lines")
+      .delete()
+      .eq("id", line.id);
 
     if (error) {
       setMessage(error.message);
@@ -358,8 +531,9 @@ export default function Chiffrage({ user, permissions }) {
       ["Marge €", marginAmount],
       ["Prix de vente conseillé", sellingPrice],
       [],
-      ["Catégorie", "Libellé", "Quantité", "Unité", "Prix unitaire", "Montant"],
+      ["Source", "Catégorie", "Libellé", "Quantité", "Unité", "Prix unitaire", "Montant"],
       ...lines.map((line) => [
+        line.stock_item_id ? "Stock" : "Libre",
         line.category,
         line.label,
         line.quantity,
@@ -369,7 +543,10 @@ export default function Chiffrage({ user, permissions }) {
       ]),
     ];
 
-    const csv = rows.map((row) => row.map((cell) => `"${String(cell ?? "").replaceAll('"', '""')}"`).join(";")).join("\n");
+    const csv = rows
+      .map((row) => row.map((cell) => `\"${String(cell ?? "").replaceAll('\"', '\"\"')}\"`).join(";"))
+      .join("\n");
+
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
@@ -387,14 +564,12 @@ export default function Chiffrage({ user, permissions }) {
         <div>
           <p className="eyebrow">Commercial</p>
           <h2>Chiffrage</h2>
-          <p>Calcule un prix à partir de lignes libres, puis crée le projet.</p>
+          <p>Chiffrage libre ou depuis le stock, puis création du projet.</p>
         </div>
 
         <div className="inline-actions">
           <button className="btn small" onClick={exportCsv}>Export CSV</button>
-          <button className="btn primary" onClick={createProjectFromQuote}>
-            Créer le projet
-          </button>
+          <button className="btn primary" onClick={createProjectFromQuote}>Créer le projet</button>
         </div>
       </div>
 
@@ -407,61 +582,35 @@ export default function Chiffrage({ user, permissions }) {
           <form className="quote-form" onSubmit={createQuote}>
             <div>
               <label>Client</label>
-              <input
-                value={quoteForm.client_name}
-                onChange={(e) => setQuoteForm({ ...quoteForm, client_name: e.target.value })}
-                placeholder="Nom du client"
-              />
+              <input value={quoteForm.client_name} onChange={(e) => setQuoteForm({ ...quoteForm, client_name: e.target.value })} placeholder="Nom du client" />
             </div>
 
             <div>
               <label>Nom du projet</label>
-              <input
-                value={quoteForm.project_name}
-                onChange={(e) => setQuoteForm({ ...quoteForm, project_name: e.target.value })}
-                placeholder="Ex : Banc mairie"
-              />
+              <input value={quoteForm.project_name} onChange={(e) => setQuoteForm({ ...quoteForm, project_name: e.target.value })} placeholder="Ex : Banc mairie" />
             </div>
 
             <div>
               <label>Type</label>
-              <select
-                value={quoteForm.project_type_id}
-                onChange={(e) => setQuoteForm({ ...quoteForm, project_type_id: e.target.value })}
-              >
+              <select value={quoteForm.project_type_id} onChange={(e) => setQuoteForm({ ...quoteForm, project_type_id: e.target.value })}>
                 <option value="">Aucun</option>
-                {projectTypes.map((type) => (
-                  <option key={type.id} value={type.id}>{type.name}</option>
-                ))}
+                {projectTypes.map((type) => <option key={type.id} value={type.id}>{type.name}</option>)}
               </select>
             </div>
 
             <div>
               <label>Date livraison</label>
-              <input
-                type="date"
-                value={quoteForm.delivery_date}
-                onChange={(e) => setQuoteForm({ ...quoteForm, delivery_date: e.target.value })}
-              />
+              <input type="date" value={quoteForm.delivery_date} onChange={(e) => setQuoteForm({ ...quoteForm, delivery_date: e.target.value })} />
             </div>
 
             <div>
               <label>Marge %</label>
-              <input
-                type="number"
-                step="0.01"
-                value={quoteForm.margin_rate}
-                onChange={(e) => setQuoteForm({ ...quoteForm, margin_rate: e.target.value })}
-              />
+              <input type="number" step="0.01" value={quoteForm.margin_rate} onChange={(e) => setQuoteForm({ ...quoteForm, margin_rate: e.target.value })} />
             </div>
 
             <div>
               <label>Description</label>
-              <input
-                value={quoteForm.description}
-                onChange={(e) => setQuoteForm({ ...quoteForm, description: e.target.value })}
-                placeholder="Infos utiles"
-              />
+              <input value={quoteForm.description} onChange={(e) => setQuoteForm({ ...quoteForm, description: e.target.value })} placeholder="Infos utiles" />
             </div>
 
             <button className="btn primary">Créer chiffrage</button>
@@ -476,16 +625,16 @@ export default function Chiffrage({ user, permissions }) {
           ) : (
             <div className="quote-list">
               {quotes.map((quote) => (
-                <button
-                  key={quote.id}
-                  className={quote.id === selectedQuoteId ? "active" : ""}
-                  onClick={() => {
-                    setSelectedQuoteId(quote.id);
-                    loadLines(quote.id);
-                  }}
-                >
-                  <strong>{quote.project_name}</strong>
-                  <small>{quote.client_name} · {quote.status || "draft"}</small>
+                <button key={quote.id} className={quote.id === selectedQuoteId ? "active" : ""} onClick={() => { setSelectedQuoteId(quote.id); loadLines(quote.id); }}>
+                  <span>
+                    <strong>{quote.project_name}</strong>
+                    <small>{quote.client_name} · {quote.status || "draft"}</small>
+                  </span>
+
+                  <span className="quote-list-actions">
+                    <span type="button" onClick={(e) => { e.stopPropagation(); duplicateQuote(quote); }}>Dupliquer</span>
+                    <span type="button" onClick={(e) => { e.stopPropagation(); deleteQuote(quote); }}>Supprimer</span>
+                  </span>
                 </button>
               ))}
             </div>
@@ -496,25 +645,10 @@ export default function Chiffrage({ user, permissions }) {
       {selectedQuote && (
         <>
           <div className="quote-summary-grid">
-            <div className="stat-card">
-              <span>Coût total</span>
-              <strong>{formatMoney(totalCost)}</strong>
-            </div>
-
-            <div className="stat-card">
-              <span>Marge</span>
-              <strong>{marginRate.toFixed(1)} %</strong>
-            </div>
-
-            <div className="stat-card accent">
-              <span>Prix conseillé</span>
-              <strong>{formatMoney(sellingPrice)}</strong>
-            </div>
-
-            <div className="stat-card">
-              <span>Marge en €</span>
-              <strong>{formatMoney(marginAmount)}</strong>
-            </div>
+            <div className="stat-card"><span>Coût total</span><strong>{formatMoney(totalCost)}</strong></div>
+            <div className="stat-card"><span>Marge</span><strong>{marginRate.toFixed(1)} %</strong></div>
+            <div className="stat-card accent"><span>Prix conseillé</span><strong>{formatMoney(sellingPrice)}</strong></div>
+            <div className="stat-card"><span>Marge en €</span><strong>{formatMoney(marginAmount)}</strong></div>
           </div>
 
           <div className="card">
@@ -528,59 +662,65 @@ export default function Chiffrage({ user, permissions }) {
                 <button className="btn small" onClick={() => updateQuoteField("client_name", "Client ?")}>Client</button>
                 <button className="btn small" onClick={() => updateQuoteField("project_name", "Nom projet ?")}>Projet</button>
                 <button className="btn small" onClick={() => updateQuoteField("margin_rate", "Marge % ?")}>Marge</button>
+                <button className="btn small" onClick={() => duplicateQuote(selectedQuote)}>Dupliquer</button>
+                <button className="btn small danger-soft" onClick={() => deleteQuote(selectedQuote)}>Supprimer</button>
               </div>
             </div>
+
+            <div className="quote-mode-switch">
+              <button className={lineMode === "free" ? "active" : ""} onClick={() => setLineMode("free")}>Ligne libre</button>
+              <button className={lineMode === "stock" ? "active" : ""} onClick={() => setLineMode("stock")}>Depuis le stock</button>
+            </div>
+
+            {lineMode === "stock" && (
+              <div className="quote-stock-picker">
+                <input placeholder="Rechercher une matière du stock..." value={stockSearch} onChange={(e) => setStockSearch(e.target.value)} />
+
+                <select value={stockCategoryId} onChange={(e) => setStockCategoryId(e.target.value)}>
+                  <option value="all">Toutes les sous-catégories</option>
+                  <option value="none">Sans sous-catégorie</option>
+                  {stockCategories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
+                </select>
+
+                <div className="quote-stock-results">
+                  {filteredStockItems.slice(0, 12).map((item) => (
+                    <button key={item.id} onClick={() => applyStockItem(item)}>
+                      <strong>{item.reference || "-"} · {item.name}</strong>
+                      <small>{stockCategoryName(item)} · Stock {item.current_quantity || 0} {item.unit || ""}</small>
+                      <small>{formatMoney(normalizedStockUnitCost(item))} / {item.unit || "unité"}</small>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
 
             <form className="quote-line-form" onSubmit={addLine}>
               <div>
                 <label>Catégorie</label>
-                <input
-                  value={lineForm.category}
-                  onChange={(e) => setLineForm({ ...lineForm, category: e.target.value })}
-                  list="quote-categories"
-                />
+                <input value={lineForm.category} onChange={(e) => setLineForm({ ...lineForm, category: e.target.value })} list="quote-categories" />
                 <datalist id="quote-categories">
-                  {DEFAULT_CATEGORIES.map((category) => (
-                    <option key={category} value={category} />
-                  ))}
+                  {DEFAULT_CATEGORIES.map((category) => <option key={category} value={category} />)}
                 </datalist>
               </div>
 
               <div>
                 <label>Libellé</label>
-                <input
-                  value={lineForm.label}
-                  onChange={(e) => setLineForm({ ...lineForm, label: e.target.value })}
-                  placeholder="Ex : Béton imprimé"
-                />
+                <input value={lineForm.label} onChange={(e) => setLineForm({ ...lineForm, label: e.target.value })} placeholder="Ex : Béton imprimé" />
               </div>
 
               <div>
                 <label>Quantité</label>
-                <input
-                  type="number"
-                  step="0.01"
-                  value={lineForm.quantity}
-                  onChange={(e) => setLineForm({ ...lineForm, quantity: e.target.value })}
-                />
+                <input type="number" step="0.01" value={lineForm.quantity} onChange={(e) => setLineForm({ ...lineForm, quantity: e.target.value })} />
               </div>
 
               <div>
                 <label>Unité</label>
-                <input
-                  value={lineForm.unit}
-                  onChange={(e) => setLineForm({ ...lineForm, unit: e.target.value })}
-                />
+                <input value={lineForm.unit} onChange={(e) => setLineForm({ ...lineForm, unit: e.target.value })} />
               </div>
 
               <div>
                 <label>Prix unité</label>
-                <input
-                  type="number"
-                  step="0.01"
-                  value={lineForm.unit_price}
-                  onChange={(e) => setLineForm({ ...lineForm, unit_price: e.target.value })}
-                />
+                <input type="number" step="0.01" value={lineForm.unit_price} onChange={(e) => setLineForm({ ...lineForm, unit_price: e.target.value })} />
               </div>
 
               <button className="btn primary">Ajouter ligne</button>
@@ -601,6 +741,7 @@ export default function Chiffrage({ user, permissions }) {
               <table>
                 <thead>
                   <tr>
+                    <th>Source</th>
                     <th>Catégorie</th>
                     <th>Libellé</th>
                     <th>Quantité</th>
@@ -613,6 +754,7 @@ export default function Chiffrage({ user, permissions }) {
                 <tbody>
                   {lines.map((line) => (
                     <tr key={line.id}>
+                      <td>{line.stock_item_id ? "Stock" : "Libre"}</td>
                       <td>{line.category}</td>
                       <td><strong>{line.label}</strong></td>
                       <td>{Number(line.quantity || 0).toLocaleString("fr-FR")} {line.unit}</td>

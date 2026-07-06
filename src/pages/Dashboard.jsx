@@ -9,6 +9,8 @@ export default function Dashboard({ user }) {
   const [installationPlanning, setInstallationPlanning] = useState([]);
   const [punchEvents, setPunchEvents] = useState([]);
   const [revenueEntries, setRevenueEntries] = useState([]);
+  const [crmContacts, setCrmContacts] = useState([]);
+  const [crmInteractions, setCrmInteractions] = useState([]);
   const [message, setMessage] = useState("");
   const [tab, setTab] = useState("notifications");
   const [acknowledgedAutoNotifications, setAcknowledgedAutoNotifications] = useState(() => {
@@ -45,6 +47,8 @@ export default function Dashboard({ user }) {
       punchResponse,
       revenueResponse,
       projectsRevenueResponse,
+      crmContactsResponse,
+      crmInteractionsResponse,
     ] = await Promise.all([
       supabase
         .from("erp_notifications")
@@ -81,6 +85,14 @@ export default function Dashboard({ user }) {
         .from("projects")
         .select("id, name, project_code, sale_amount, signed_date, created_at")
         .eq("active", true),
+      supabase
+        .from("crm_contacts")
+        .select("*"),
+      supabase
+        .from("crm_interactions")
+        .select("*")
+        .eq("done", false)
+        .order("next_action_date", { ascending: true }),
     ]);
 
     const error =
@@ -91,7 +103,9 @@ export default function Dashboard({ user }) {
       installationResponse.error ||
       punchResponse.error ||
       revenueResponse.error ||
-      projectsRevenueResponse.error;
+      projectsRevenueResponse.error ||
+      crmContactsResponse.error ||
+      crmInteractionsResponse.error;
 
     if (error) {
       setMessage(error.message);
@@ -593,6 +607,59 @@ export default function Dashboard({ user }) {
 
   const employeesNow = latestEmployeeEvents();
 
+  function crmContactName(contactId) {
+    const contact = crmContacts.find((item) => item.id === contactId);
+    return contact?.company_name || "-";
+  }
+
+  function isToday(dateValue) {
+    if (!dateValue) return false;
+    return String(dateValue).slice(0, 10) === now.toISOString().slice(0, 10);
+  }
+
+  function isOverdue(dateValue) {
+    if (!dateValue) return false;
+    return String(dateValue).slice(0, 10) < now.toISOString().slice(0, 10);
+  }
+
+  const crmDueAlerts = crmInteractions.filter((interaction) => {
+    if (!interaction.next_action_date) return false;
+    return String(interaction.next_action_date).slice(0, 10) <= now.toISOString().slice(0, 10);
+  });
+
+  const crmOverdueAlerts = crmDueAlerts.filter((interaction) =>
+    isOverdue(interaction.next_action_date)
+  );
+
+  const crmTodayAlerts = crmDueAlerts.filter((interaction) =>
+    isToday(interaction.next_action_date)
+  );
+
+  const crmTodayMeetings = crmInteractions
+    .filter((interaction) => {
+      if (interaction.interaction_type !== "rdv") return false;
+      return isToday(interaction.next_action_date || interaction.interaction_date);
+    })
+    .sort((a, b) => String(a.meeting_time || "").localeCompare(String(b.meeting_time || "")));
+
+  async function markCrmAlertDone(interaction) {
+    const { error } = await supabase
+      .from("crm_interactions")
+      .update({
+        done: true,
+        done_at: new Date().toISOString(),
+      })
+      .eq("id", interaction.id);
+
+    if (error) {
+      setMessage(error.message);
+      return;
+    }
+
+    setMessage("Alerte CRM traitée.");
+    await loadDashboard();
+  }
+
   function levelLabel(level) {
     const labels = {
       critical: "Critique",
@@ -645,6 +712,83 @@ export default function Dashboard({ user }) {
         <div className="stat-card">
           <span>CA réalisé total</span>
           <strong>{formatMoney(annualRevenue)}</strong>
+        </div>
+      </div>
+
+      <div className="dashboard-crm-grid">
+        <div className="card dashboard-crm-card overdue">
+          <div className="page-head">
+            <div>
+              <h3>CRM — Alertes en retard</h3>
+              <p>Relances non traitées avant aujourd'hui.</p>
+            </div>
+            <strong>{crmOverdueAlerts.length}</strong>
+          </div>
+
+          {crmOverdueAlerts.length === 0 ? (
+            <p>Aucune alerte CRM en retard.</p>
+          ) : (
+            crmOverdueAlerts.slice(0, 8).map((alert) => (
+              <div className="dashboard-crm-row" key={alert.id}>
+                <div>
+                  <strong>{crmContactName(alert.contact_id)}</strong>
+                  <small>{alert.next_action || alert.subject || "Relance"} · {alert.next_action_date}</small>
+                </div>
+                <button className="btn small" onClick={() => markCrmAlertDone(alert)}>Traité</button>
+              </div>
+            ))
+          )}
+        </div>
+
+        <div className="card dashboard-crm-card today">
+          <div className="page-head">
+            <div>
+              <h3>CRM — À faire aujourd'hui</h3>
+              <p>Relances et actions prévues à date.</p>
+            </div>
+            <strong>{crmTodayAlerts.length}</strong>
+          </div>
+
+          {crmTodayAlerts.length === 0 ? (
+            <p>Aucune relance CRM aujourd'hui.</p>
+          ) : (
+            crmTodayAlerts.slice(0, 8).map((alert) => (
+              <div className="dashboard-crm-row" key={alert.id}>
+                <div>
+                  <strong>{crmContactName(alert.contact_id)}</strong>
+                  <small>{alert.next_action || alert.subject || "Action"} · {alert.next_action_date}</small>
+                </div>
+                <button className="btn small" onClick={() => markCrmAlertDone(alert)}>Traité</button>
+              </div>
+            ))
+          )}
+        </div>
+
+        <div className="card dashboard-crm-card meetings">
+          <div className="page-head">
+            <div>
+              <h3>CRM — RDV du jour</h3>
+              <p>Rendez-vous commerciaux prévus aujourd'hui.</p>
+            </div>
+            <strong>{crmTodayMeetings.length}</strong>
+          </div>
+
+          {crmTodayMeetings.length === 0 ? (
+            <p>Aucun RDV commercial aujourd'hui.</p>
+          ) : (
+            crmTodayMeetings.slice(0, 8).map((meeting) => (
+              <div className="dashboard-crm-row" key={meeting.id}>
+                <div>
+                  <strong>{meeting.meeting_time ? `${meeting.meeting_time} · ` : ""}{crmContactName(meeting.contact_id)}</strong>
+                  <small>
+                    {meeting.subject || meeting.next_action || "RDV commercial"}
+                    {meeting.meeting_location ? ` · ${meeting.meeting_location}` : ""}
+                  </small>
+                </div>
+                <button className="btn small" onClick={() => markCrmAlertDone(meeting)}>Traité</button>
+              </div>
+            ))
+          )}
         </div>
       </div>
 

@@ -5,6 +5,7 @@ export const MODULES = [
   { key: "pointage", label: "Pointage" },
   { key: "employes", label: "Employés / droits" },
   { key: "projets", label: "Projets" },
+  { key: "chiffrage", label: "Chiffrage" },
   { key: "planning", label: "Planning" },
   { key: "stock", label: "Stock" },
   { key: "couts", label: "Coûts & marges" },
@@ -64,13 +65,13 @@ export function defaultPermissions(role = "employee") {
   }
 
   if (role === "direction") {
-    ["dashboard", "projets", "planning", "stock", "couts", "pointage"].forEach(
+    ["dashboard", "projets", "chiffrage", "planning", "stock", "couts", "pointage"].forEach(
       (key) => {
         rights[key] = {
           ...emptyRight(true),
           can_create: true,
           can_edit: true,
-          can_validate: key === "projets",
+          can_validate: key === "projets" || key === "chiffrage",
           can_archive: key === "projets",
           can_restore: key === "projets",
           can_export: true,
@@ -91,11 +92,12 @@ export function defaultPermissions(role = "employee") {
   }
 
   if (role === "commercial") {
-    ["dashboard", "projets", "planning"].forEach((key) => {
+    ["dashboard", "projets", "chiffrage", "planning"].forEach((key) => {
       rights[key] = {
         ...emptyRight(true),
-        can_create: key === "projets",
-        can_edit: key === "projets",
+        can_create: key === "projets" || key === "chiffrage",
+        can_edit: key === "projets" || key === "chiffrage",
+        can_validate: key === "chiffrage",
         can_export: true,
       };
     });

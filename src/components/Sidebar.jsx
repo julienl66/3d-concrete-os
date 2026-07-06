@@ -5,6 +5,7 @@ const items = [
   { id: "pointage", label: "Pointage", icon: "⏱️" },
   { id: "employes", label: "Employés", icon: "👷" },
   { id: "projets", label: "Projets", icon: "📁" },
+  { id: "chiffrage", label: "Chiffrage", icon: "🧮" },
   { id: "planning", label: "Planning", icon: "📅" },
   { id: "stock", label: "Stock", icon: "📦" },
   { id: "couts", label: "Coûts & marges", icon: "💰" },

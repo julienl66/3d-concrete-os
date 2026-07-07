@@ -11,6 +11,7 @@ export default function Dashboard({ user }) {
   const [revenueEntries, setRevenueEntries] = useState([]);
   const [weeklyTasks, setWeeklyTasks] = useState([]);
   const [weeklyTopics, setWeeklyTopics] = useState([]);
+  const [weeklyEmployees, setWeeklyEmployees] = useState([]);
   const [crmContacts, setCrmContacts] = useState([]);
   const [crmInteractions, setCrmInteractions] = useState([]);
   const [message, setMessage] = useState("");
@@ -51,6 +52,7 @@ export default function Dashboard({ user }) {
       projectsRevenueResponse,
       weeklyTasksResponse,
       weeklyTopicsResponse,
+      weeklyEmployeesResponse,
       crmContactsResponse,
       crmInteractionsResponse,
     ] = await Promise.all([
@@ -110,6 +112,7 @@ export default function Dashboard({ user }) {
       projectsRevenueResponse.error ||
       weeklyTasksResponse.error ||
       weeklyTopicsResponse.error ||
+      weeklyEmployeesResponse.error ||
       crmContactsResponse.error ||
       crmInteractionsResponse.error;
 
@@ -693,6 +696,16 @@ export default function Dashboard({ user }) {
   const dashboardWeeklyTasks = visibleWeeklyTasks;
   const shouldShowTaskPopup = myWeeklyTasks.length > 0;
 
+  function weeklyTopicTitle(topicId) {
+    return weeklyTopics.find((topic) => topic.id === topicId)?.title || "Point hebdo";
+  }
+
+  function weeklyEmployeeName(employeeId) {
+    return weeklyEmployees.find((employee) => employee.id === employeeId)?.name || "Non assignée";
+  }
+
+
+
   async function completeWeeklyDashboardTask(task) {
     const { error } = await supabase
       .from("weekly_tasks")
@@ -782,7 +795,7 @@ export default function Dashboard({ user }) {
               <div key={task.id}>
                 <strong>{task.title}</strong>
                 <small>
-                  {task.weekly_topics?.title || "Point hebdo"}
+                  {weeklyTopicTitle(task.topic_id)}
                   {task.due_date ? ` · ${task.due_date}` : ""}
                 </small>
               </div>
@@ -923,7 +936,7 @@ export default function Dashboard({ user }) {
               <div className={`dashboard-weekly-task-row ${task.due_date && String(task.due_date) < new Date().toISOString().slice(0, 10) ? "late" : ""}`} key={task.id}>
                 <div>
                   <strong>🔴 {task.title}</strong>
-                  <small>{task.weekly_topics?.title || "Point hebdo"}{task.due_date ? ` · échéance ${task.due_date}` : ""}</small>
+                  <small>{weeklyTopicTitle(task.topic_id)}{task.due_date ? ` · échéance ${task.due_date}` : ""}</small>
                 </div>
                 <button className="btn small primary" onClick={() => completeWeeklyDashboardTask(task)}>✅ Valider</button>
               </div>
@@ -945,7 +958,7 @@ export default function Dashboard({ user }) {
               <div className={`dashboard-weekly-task-row ${task.due_date && String(task.due_date) < new Date().toISOString().slice(0, 10) ? "late" : ""}`} key={task.id}>
                 <div>
                   <strong>{task.assigned_to === user?.id ? "🔴 " : "⚪ "}{task.title}</strong>
-                  <small>{task.weekly_topics?.title || "Point hebdo"} · {task.employees?.name || "Non assignée"}{task.due_date ? ` · échéance ${task.due_date}` : ""}</small>
+                  <small>{weeklyTopicTitle(task.topic_id)} · {weeklyEmployeeName(task.assigned_to)}{task.due_date ? ` · échéance ${task.due_date}` : ""}</small>
                 </div>
                 {(task.assigned_to === user?.id || user?.role === "admin" || user?.role === "direction") && (
                   <button className="btn small primary" onClick={() => completeWeeklyDashboardTask(task)}>✅ Valider</button>

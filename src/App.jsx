@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import Login from "./pages/Login.jsx";
 import Dashboard from "./pages/Dashboard.jsx";
+import BusinessIntelligence from "./pages/BusinessIntelligence.jsx";
 import WeeklyPoints from "./pages/WeeklyPoints.jsx";
 import Pointage from "./pages/Pointage.jsx";
 import Employes from "./pages/Employes.jsx";
@@ -17,6 +18,7 @@ import { canAccess, loadEmployeePermissions } from "./services/permissions.js";
 
 const pages = {
   dashboard: Dashboard,
+  bi: BusinessIntelligence,
   weekly: WeeklyPoints,
   pointage: Pointage,
   employes: Employes,

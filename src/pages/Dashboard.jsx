@@ -139,6 +139,9 @@ export default function Dashboard({ user }) {
       }));
 
     setRevenueEntries([...projectRevenueRows, ...(revenueResponse.data || [])]);
+    setWeeklyTasks(weeklyTasksResponse.data || []);
+    setWeeklyTopics(weeklyTopicsResponse.data || []);
+    setWeeklyEmployees(weeklyEmployeesResponse.data || []);
   }
 
   function formatDateTime(value) {

@@ -52,6 +52,13 @@ export default function BusinessIntelligence({ user, permissions }) {
     color: "#2563eb",
   });
 
+  const [pipeForm, setPipeForm] = useState({
+    contact_id: "",
+    estimated_amount: "",
+    probability_percent: "30",
+    expected_signature_month: new Date().toISOString().slice(0, 7),
+  });
+
   useEffect(() => {
     loadData();
   }, []);
@@ -373,6 +380,122 @@ export default function BusinessIntelligence({ user, permissions }) {
 
   const maxFunnelCount = Math.max(1, ...crmFunnel.map((row) => row.count));
 
+
+  const openCrmContacts = crmContacts.filter((contact) => {
+    const stage = crmStages.find((item) => item.id === contact.stage_id);
+    const stageName = String(stage?.name || "").toLowerCase();
+
+    return !stageName.includes("gagn") && !stageName.includes("perdu");
+  });
+
+  const pipelineRaw = openCrmContacts.reduce(
+    (sum, contact) => sum + Number(contact.estimated_amount || 0),
+    0
+  );
+
+  const pipelineWeighted = openCrmContacts.reduce((sum, contact) => {
+    const probability = Number(contact.probability_percent || contact.probability || 0);
+    return sum + Number(contact.estimated_amount || 0) * (probability / 100);
+  }, 0);
+
+  const forecastMonths = Array.from({ length: 12 }, (_, index) => {
+    const date = new Date();
+    date.setMonth(date.getMonth() + index, 1);
+    const key = date.toISOString().slice(0, 7);
+
+    const monthContacts = openCrmContacts.filter((contact) => {
+      const month =
+        contact.expected_signature_month ||
+        contact.expected_close_month ||
+        contact.forecast_month ||
+        String(contact.created_at || "").slice(0, 7);
+
+      return month === key;
+    });
+
+    const raw = monthContacts.reduce(
+      (sum, contact) => sum + Number(contact.estimated_amount || 0),
+      0
+    );
+
+    const weighted = monthContacts.reduce((sum, contact) => {
+      const probability = Number(contact.probability_percent || contact.probability || 0);
+      return sum + Number(contact.estimated_amount || 0) * (probability / 100);
+    }, 0);
+
+    return {
+      key,
+      label: date.toLocaleDateString("fr-FR", { month: "short", year: "2-digit" }),
+      raw,
+      weighted,
+      count: monthContacts.length,
+    };
+  });
+
+  const maxForecastValue = Math.max(
+    1,
+    ...forecastMonths.map((row) => Math.max(row.raw, row.weighted))
+  );
+
+  async function updatePipeContact(e) {
+    e.preventDefault();
+
+    if (!pipeForm.contact_id) {
+      setMessage("Choisis une opportunité CRM.");
+      return;
+    }
+
+    const { error } = await supabase
+      .from("crm_contacts")
+      .update({
+        estimated_amount: Number(pipeForm.estimated_amount || 0),
+        probability_percent: Number(pipeForm.probability_percent || 0),
+        expected_signature_month: pipeForm.expected_signature_month || null,
+      })
+      .eq("id", pipeForm.contact_id);
+
+    if (error) {
+      setMessage(error.message);
+      return;
+    }
+
+    setPipeForm({
+      contact_id: "",
+      estimated_amount: "",
+      probability_percent: "30",
+      expected_signature_month: new Date().toISOString().slice(0, 7),
+    });
+
+    setMessage("Prévision pipe mise à jour.");
+    await loadData();
+  }
+
+  function selectPipeContact(contactId) {
+    const contact = crmContacts.find((item) => item.id === contactId);
+
+    if (!contact) {
+      setPipeForm({
+        contact_id: "",
+        estimated_amount: "",
+        probability_percent: "30",
+        expected_signature_month: new Date().toISOString().slice(0, 7),
+      });
+      return;
+    }
+
+    setPipeForm({
+      contact_id: contact.id,
+      estimated_amount: String(contact.estimated_amount || ""),
+      probability_percent: String(contact.probability_percent || contact.probability || 30),
+      expected_signature_month:
+        contact.expected_signature_month ||
+        contact.expected_close_month ||
+        contact.forecast_month ||
+        new Date().toISOString().slice(0, 7),
+    });
+  }
+
+
   async function createWidget(e) {
     e.preventDefault();
 
@@ -587,26 +710,125 @@ export default function BusinessIntelligence({ user, permissions }) {
       )}
 
       {view === "commercial" && (
-        <div className="card">
-          <h3>Pipeline CRM</h3>
+        <>
+          <div className="bi-pipeline-summary">
+            <div className="card investor-hero">
+              <span>PIPE BRUT</span>
+              <strong>{formatMoney(pipelineRaw + quotePipeline)}</strong>
+              <p>CRM ouvert + chiffrages non convertis.</p>
+            </div>
 
-          <div className="bi-funnel">
-            {crmFunnel.map((row) => (
-              <div key={row.id}>
-                <div>
-                  <strong>{row.label}</strong>
-                  <span>{row.count} contact(s)</span>
-                </div>
+            <div className="card investor-hero">
+              <span>PIPE PONDÉRÉ</span>
+              <strong>{formatMoney(pipelineWeighted)}</strong>
+              <p>Montant CRM × probabilité de signature.</p>
+            </div>
 
-                <div className="bi-funnel-bar">
-                  <b style={{ width: `${Math.max(5, (row.count / maxFunnelCount) * 100)}%`, background: row.color }} />
-                </div>
-
-                <small>{formatMoney(row.value)}</small>
-              </div>
-            ))}
+            <div className="card investor-hero">
+              <span>OPPORTUNITÉS</span>
+              <strong>{openCrmContacts.length}</strong>
+              <p>Dossiers CRM encore ouverts.</p>
+            </div>
           </div>
-        </div>
+
+          <div className="card">
+            <div className="page-head">
+              <div>
+                <h3>Prévisionnel commercial mensuel</h3>
+                <p>Pipe brut et pipe pondéré par mois de signature prévisionnelle.</p>
+              </div>
+            </div>
+
+            <div className="bi-forecast-chart">
+              {forecastMonths.map((row) => (
+                <div key={row.key}>
+                  <span>{row.label}</span>
+                  <div className="bi-forecast-bars">
+                    <b style={{ height: `${Math.max(4, (row.raw / maxForecastValue) * 100)}%` }} />
+                    <i style={{ height: `${Math.max(4, (row.weighted / maxForecastValue) * 100)}%` }} />
+                  </div>
+                  <small>{formatMoney(row.weighted)}</small>
+                  <em>{row.count} opp.</em>
+                </div>
+              ))}
+            </div>
+
+            <div className="bi-forecast-legend">
+              <span><b /> Pipe brut</span>
+              <span><i /> Pipe pondéré</span>
+            </div>
+          </div>
+
+          <div className="card">
+            <h3>Mettre à jour le pipe CRM</h3>
+
+            <form className="bi-pipe-form" onSubmit={updatePipeContact}>
+              <div>
+                <label>Opportunité CRM</label>
+                <select value={pipeForm.contact_id} onChange={(e) => selectPipeContact(e.target.value)}>
+                  <option value="">Choisir</option>
+                  {openCrmContacts.map((contact) => (
+                    <option key={contact.id} value={contact.id}>
+                      {contact.company_name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label>Montant estimé</label>
+                <input
+                  type="number"
+                  value={pipeForm.estimated_amount}
+                  onChange={(e) => setPipeForm({ ...pipeForm, estimated_amount: e.target.value })}
+                />
+              </div>
+
+              <div>
+                <label>Probabilité %</label>
+                <input
+                  type="number"
+                  min="0"
+                  max="100"
+                  value={pipeForm.probability_percent}
+                  onChange={(e) => setPipeForm({ ...pipeForm, probability_percent: e.target.value })}
+                />
+              </div>
+
+              <div>
+                <label>Mois prévisionnel</label>
+                <input
+                  type="month"
+                  value={pipeForm.expected_signature_month}
+                  onChange={(e) => setPipeForm({ ...pipeForm, expected_signature_month: e.target.value })}
+                />
+              </div>
+
+              <button className="btn primary">Mettre à jour</button>
+            </form>
+          </div>
+
+          <div className="card">
+            <h3>Pipeline CRM par étape</h3>
+
+            <div className="bi-funnel">
+              {crmFunnel.map((row) => (
+                <div key={row.id}>
+                  <div>
+                    <strong>{row.label}</strong>
+                    <span>{row.count} contact(s)</span>
+                  </div>
+
+                  <div className="bi-funnel-bar">
+                    <b style={{ width: `${Math.max(5, (row.count / maxFunnelCount) * 100)}%`, background: row.color }} />
+                  </div>
+
+                  <small>{formatMoney(row.value)}</small>
+                </div>
+              ))}
+            </div>
+          </div>
+        </>
       )}
 
       {view === "investors" && (

@@ -7346,4 +7346,19 @@ textarea:focus {
   .dashboard-task-popup {
     grid-template-columns: 1fr;
   }
+}.dashboard-weekly-debug {
+  margin-bottom: 12px;
+  border-color: #bfdbfe !important;
 }
+
+.dashboard-weekly-debug strong,
+.dashboard-weekly-debug small {
+  display: block;
+}
+
+.dashboard-weekly-debug small {
+  margin-top: 4px;
+  color: #64748b;
+  font-weight: 800;
+}
+

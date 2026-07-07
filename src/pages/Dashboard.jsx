@@ -93,14 +93,10 @@ export default function Dashboard({ user }) {
         .eq("active", true),      supabase
         .from("weekly_tasks")
         .select("*")
-        .eq("active", true)
-        .neq("status", "done")
-        .order("due_date", { ascending: true }),
+        .order("created_at", { ascending: false }),
       supabase
         .from("weekly_topics")
         .select("*")
-        .eq("active", true)
-        .neq("status", "done")
         .order("week_date", { ascending: false })
         .order("created_at", { ascending: false }),
       supabase
@@ -155,8 +151,8 @@ export default function Dashboard({ user }) {
       }));
 
     setRevenueEntries([...projectRevenueRows, ...(revenueResponse.data || [])]);
-    setWeeklyTasks(weeklyTasksResponse.data || []);
-    setWeeklyTopics(weeklyTopicsResponse.data || []);
+    setWeeklyTasks((weeklyTasksResponse.data || []).filter((task) => task.active !== false && task.status !== "done"));
+    setWeeklyTopics((weeklyTopicsResponse.data || []).filter((topic) => topic.active !== false && topic.status !== "done"));
     setWeeklyEmployees(weeklyEmployeesResponse.data || []);
   }
 
@@ -929,6 +925,13 @@ export default function Dashboard({ user }) {
             ))
           )}
         </div>
+      </div>
+
+      <div className="card dashboard-weekly-debug">
+        <strong>Debug tâches hebdo</strong>
+        <small>
+          Chargées : {weeklyTasks.length} tâche(s) · {weeklyTopics.length} sujet(s) · utilisateur : {user?.name || user?.id || "-"}
+        </small>
       </div>
 
       <div className="dashboard-action-hero">

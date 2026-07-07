@@ -814,12 +814,18 @@ export default function Dashboard({ user }) {
 
           <div className="dashboard-task-popup-list">
             {myWeeklyTasks.slice(0, 4).map((task) => (
-              <div key={task.id}>
-                <strong>{task.title}</strong>
-                <small>
-                  {weeklyTopicTitle(task.topic_id)}
-                  {task.due_date ? ` · ${task.due_date}` : ""}
-                </small>
+              <div className="dashboard-task-popup-item" key={task.id}>
+                <div>
+                  <strong>{task.title}</strong>
+                  <small>
+                    {weeklyTopicTitle(task.topic_id)}
+                    {task.due_date ? ` · ${task.due_date}` : ""}
+                  </small>
+                </div>
+
+                <button className="btn small primary" onClick={() => completeWeeklyDashboardTask(task)}>
+                  ✅ Valider
+                </button>
               </div>
             ))}
           </div>

@@ -9,6 +9,7 @@ export default function Dashboard({ user }) {
   const [installationPlanning, setInstallationPlanning] = useState([]);
   const [punchEvents, setPunchEvents] = useState([]);
   const [revenueEntries, setRevenueEntries] = useState([]);
+  const [weeklyTasks, setWeeklyTasks] = useState([]);
   const [crmContacts, setCrmContacts] = useState([]);
   const [crmInteractions, setCrmInteractions] = useState([]);
   const [message, setMessage] = useState("");
@@ -660,6 +661,48 @@ export default function Dashboard({ user }) {
     await loadDashboard();
   }
 
+  const dashboardWeeklyTasks = weeklyTasks.filter((task) => {
+    if (!task.assigned_to) return true;
+    return task.assigned_to === user?.id || user?.role === "admin" || user?.role === "direction";
+  });
+
+  async function completeWeeklyDashboardTask(task) {
+    const { error } = await supabase
+      .from("weekly_tasks")
+      .update({
+        status: "done",
+        completed_by: user?.id || null,
+        completed_at: new Date().toISOString(),
+      })
+      .eq("id", task.id);
+
+    if (error) {
+      setMessage(error.message);
+      return;
+    }
+
+    const { data: remainingTasks, error: remainingError } = await supabase
+      .from("weekly_tasks")
+      .select("id")
+      .eq("topic_id", task.topic_id)
+      .eq("active", true)
+      .neq("status", "done");
+
+    if (!remainingError && (remainingTasks || []).length === 0) {
+      await supabase
+        .from("weekly_topics")
+        .update({
+          status: "done",
+          validated_by: user?.id || null,
+          validated_at: new Date().toISOString(),
+        })
+        .eq("id", task.topic_id);
+    }
+
+    setMessage("Tâche hebdo validée.");
+    await loadDashboard();
+  }
+
   function levelLabel(level) {
     const labels = {
       critical: "Critique",
@@ -790,6 +833,38 @@ export default function Dashboard({ user }) {
             ))
           )}
         </div>
+      </div>
+
+      <div className="card dashboard-weekly-tasks">
+        <div className="page-head">
+          <div>
+            <h3>Tâches du point hebdo</h3>
+            <p>Tâches assignées à réaliser. Elles restent visibles tant qu'elles ne sont pas validées.</p>
+          </div>
+          <strong>{dashboardWeeklyTasks.length}</strong>
+        </div>
+
+        {dashboardWeeklyTasks.length === 0 ? (
+          <p>Aucune tâche hebdo en attente.</p>
+        ) : (
+          dashboardWeeklyTasks.slice(0, 10).map((task) => (
+            <div className="dashboard-weekly-task-row" key={task.id}>
+              <div>
+                <strong>{task.title}</strong>
+                <small>
+                  {task.weekly_topics?.title || "Point hebdo"}
+                  {" · "}
+                  {task.employees?.name || "Non assignée"}
+                  {task.due_date ? ` · échéance ${task.due_date}` : ""}
+                </small>
+              </div>
+
+              <button className="btn small primary" onClick={() => completeWeeklyDashboardTask(task)}>
+                ✅ Valider
+              </button>
+            </div>
+          ))
+        )}
       </div>
 
       <div className="card revenue-summary-card">

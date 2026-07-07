@@ -7022,3 +7022,138 @@ textarea:focus {
   font-weight: 800;
 }
 
+.weekly-layout {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px;
+}
+
+.weekly-topic-form,
+.weekly-task-form {
+  display: grid;
+  grid-template-columns: 1fr 150px 160px;
+  gap: 10px;
+  align-items: end;
+}
+
+.weekly-topic-form div:nth-child(4),
+.weekly-task-form div:nth-child(5) {
+  grid-column: 1 / -1;
+}
+
+.weekly-topic-form button,
+.weekly-task-form button {
+  grid-column: 1 / -1;
+}
+
+.weekly-topic-list {
+  display: grid;
+  gap: 14px;
+}
+
+.weekly-topic-card {
+  border: 1px solid #e5e7eb;
+  border-radius: 24px;
+  padding: 16px;
+  background: white;
+}
+
+.weekly-topic-card.in_progress {
+  border-color: #fed7aa;
+  background: #fff7ed;
+}
+
+.weekly-topic-card.done {
+  border-color: #bbf7d0;
+  background: #f0fdf4;
+}
+
+.weekly-topic-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  align-items: flex-start;
+}
+
+.weekly-topic-head strong,
+.weekly-topic-head small,
+.weekly-task-row strong,
+.weekly-task-row small {
+  display: block;
+}
+
+.weekly-topic-head small,
+.weekly-task-row small {
+  margin-top: 4px;
+  color: #64748b;
+  font-weight: 800;
+}
+
+.weekly-topic-head p,
+.weekly-task-row p {
+  margin: 8px 0 0;
+  color: #475569;
+}
+
+.weekly-task-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.weekly-task-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  border-radius: 16px;
+  padding: 12px;
+  background: #f8fafc;
+  border: 1px solid #e5e7eb;
+}
+
+.weekly-task-row.done {
+  background: #ecfdf5;
+  border-color: #bbf7d0;
+}
+
+@media (max-width: 1100px) {
+  .weekly-layout,
+  .weekly-topic-form,
+  .weekly-task-form {
+    grid-template-columns: 1fr;
+  }
+
+  .weekly-topic-head,
+  .weekly-task-row {
+    display: block;
+  }
+
+  .weekly-topic-head .inline-actions,
+  .weekly-task-row .inline-actions {
+    margin-top: 12px;
+  }
+}
+.dashboard-weekly-tasks {
+  margin-bottom: 18px;
+}
+
+.dashboard-weekly-task-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 0;
+  border-top: 1px solid #e5e7eb;
+}
+
+.dashboard-weekly-task-row strong,
+.dashboard-weekly-task-row small {
+  display: block;
+}
+
+.dashboard-weekly-task-row small {
+  margin-top: 4px;
+  color: #64748b;
+  font-weight: 800;
+}

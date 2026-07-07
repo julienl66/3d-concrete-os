@@ -671,7 +671,14 @@ export default function Dashboard({ user }) {
 
   const isManagerUser = user?.role === "admin" || user?.role === "direction";
 
-  const myWeeklyTasks = weeklyTasks.filter((task) => String(task.assigned_to || "") === String(user?.id || ""));
+  const myWeeklyTasks = weeklyTasks.filter((task) => {
+    const assignedEmployee = weeklyEmployees.find((employee) => employee.id === task.assigned_to);
+    return (
+      String(task.assigned_to || "") === String(user?.id || "") ||
+      String(task.assigned_to || "") === String(user?.employee_id || "") ||
+      String(assignedEmployee?.name || "").toLowerCase() === String(user?.name || "").toLowerCase()
+    );
+  });
 
   const visibleWeeklyTasks = isManagerUser
     ? weeklyTasks

@@ -49,6 +49,8 @@ export default function Dashboard({ user }) {
       punchResponse,
       revenueResponse,
       projectsRevenueResponse,
+      weeklyTasksResponse,
+      weeklyTopicsResponse,
       crmContactsResponse,
       crmInteractionsResponse,
     ] = await Promise.all([
@@ -106,6 +108,8 @@ export default function Dashboard({ user }) {
       punchResponse.error ||
       revenueResponse.error ||
       projectsRevenueResponse.error ||
+      weeklyTasksResponse.error ||
+      weeklyTopicsResponse.error ||
       crmContactsResponse.error ||
       crmInteractionsResponse.error;
 
@@ -664,7 +668,7 @@ export default function Dashboard({ user }) {
 
   const isManagerUser = user?.role === "admin" || user?.role === "direction";
 
-  const myWeeklyTasks = weeklyTasks.filter((task) => task.assigned_to === user?.id);
+  const myWeeklyTasks = weeklyTasks.filter((task) => String(task.assigned_to || "") === String(user?.id || ""));
 
   const visibleWeeklyTasks = isManagerUser
     ? weeklyTasks
@@ -973,10 +977,9 @@ export default function Dashboard({ user }) {
             ))
           )}
         </div>
-        )}
       </div>
 
-      <div className="card revenue-summary-card">
+<div className="card revenue-summary-card">
         <div className="page-head">
           <div>
             <h3>CA réalisé</h3>

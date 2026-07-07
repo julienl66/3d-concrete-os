@@ -90,6 +90,22 @@ export default function Dashboard({ user }) {
       supabase
         .from("projects")
         .select("id, name, project_code, sale_amount, signed_date, created_at")
+        .eq("active", true),      supabase
+        .from("weekly_tasks")
+        .select("*")
+        .eq("active", true)
+        .neq("status", "done")
+        .order("due_date", { ascending: true }),
+      supabase
+        .from("weekly_topics")
+        .select("*")
+        .eq("active", true)
+        .neq("status", "done")
+        .order("week_date", { ascending: false })
+        .order("created_at", { ascending: false }),
+      supabase
+        .from("employees")
+        .select("id, name")
         .eq("active", true),
       supabase
         .from("crm_contacts")

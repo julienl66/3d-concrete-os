@@ -973,9 +973,10 @@ export default function Dashboard({ user }) {
             ))
           )}
         </div>
+        )}
       </div>
 
-<div className="card revenue-summary-card">
+      <div className="card revenue-summary-card">
         <div className="page-head">
           <div>
             <h3>CA réalisé</h3>

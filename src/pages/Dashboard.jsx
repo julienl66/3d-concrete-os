@@ -761,6 +761,7 @@ export default function Dashboard({ user }) {
         .eq("id", task.topic_id);
     }
 
+    setWeeklyTasks((current) => current.filter((item) => item.id !== task.id));
     setMessage("Tâche hebdo validée.");
     await loadDashboard();
   }
@@ -933,13 +934,6 @@ export default function Dashboard({ user }) {
         </div>
       </div>
 
-      <div className="card dashboard-weekly-debug">
-        <strong>Debug tâches hebdo</strong>
-        <small>
-          Chargées : {weeklyTasks.length} tâche(s) · {weeklyTopics.length} sujet(s) · utilisateur : {user?.name || user?.id || "-"}
-        </small>
-      </div>
-
       <div className="dashboard-action-hero">
         <div className="dashboard-action-title">
           <span>À faire maintenant</span>
@@ -954,79 +948,38 @@ export default function Dashboard({ user }) {
         </div>
       </div>
 
-      <div className="dashboard-weekly-grid">
-        <div className="card dashboard-weekly-tasks dashboard-my-tasks">
-          <div className="page-head">
-            <div>
-              <h3>🔴 Mes tâches</h3>
-              <p>Visible dès l'ouverture de l'application.</p>
+      {isManagerUser && (
+        <div className="dashboard-weekly-grid dashboard-weekly-grid-team-only">
+          <div className="card dashboard-weekly-tasks">
+            <div className="page-head">
+              <div>
+                <h3>👥 Tâches équipe</h3>
+                <p>Vue commune des actions en attente. Une tâche validée sort automatiquement de cette liste.</p>
+              </div>
+              <strong>{dashboardWeeklyTasks.length}</strong>
             </div>
-            <strong>{myWeeklyTasks.length}</strong>
-          </div>
 
-          {myWeeklyTasks.length === 0 ? (
-            <p>Aucune tâche assignée à toi.</p>
-          ) : (
-            myWeeklyTasks.slice(0, 8).map((task) => (
-              <div className={`dashboard-weekly-task-row ${task.due_date && String(task.due_date) < new Date().toISOString().slice(0, 10) ? "late" : ""}`} key={task.id}>
-                <div>
-                  <strong>🔴 {task.title}</strong>
-                  <small>{weeklyTopicTitle(task.topic_id)}{task.due_date ? ` · échéance ${task.due_date}` : ""}</small>
+            {dashboardWeeklyTasks.length === 0 ? (
+              <p>Aucune tâche hebdo en attente.</p>
+            ) : (
+              dashboardWeeklyTasks.map((task) => (
+                <div className={`dashboard-weekly-task-row ${task.due_date && String(task.due_date) < new Date().toISOString().slice(0, 10) ? "late" : ""}`} key={task.id}>
+                  <div>
+                    <strong>{task.assigned_to === user?.id ? "🔴 " : "⚪ "}{task.title}</strong>
+                    <small>{weeklyTopicTitle(task.topic_id)} · {weeklyEmployeeName(task.assigned_to)}{task.due_date ? ` · échéance ${task.due_date}` : ""}</small>
+                  </div>
+
+                  {(task.assigned_to === user?.id || user?.role === "admin" || user?.role === "direction") && (
+                    <button className="btn small primary" onClick={() => completeWeeklyDashboardTask(task)}>
+                      ✅ Valider
+                    </button>
+                  )}
                 </div>
-                <button className="btn small primary" onClick={() => completeWeeklyDashboardTask(task)}>✅ Valider</button>
-              </div>
-            ))
-          )}
-        </div>
-
-        {isManagerUser && (
-        <div className="card dashboard-weekly-tasks">
-          <div className="page-head">
-            <div><h3>👥 Tâches équipe</h3><p>Vue commune des actions en attente.</p></div>
-            <strong>{dashboardWeeklyTasks.length}</strong>
+              ))
+            )}
           </div>
-
-          {dashboardWeeklyTasks.length === 0 ? (
-            <p>Aucune tâche hebdo en attente.</p>
-          ) : (
-            dashboardWeeklyTasks.slice(0, 8).map((task) => (
-              <div className={`dashboard-weekly-task-row ${task.due_date && String(task.due_date) < new Date().toISOString().slice(0, 10) ? "late" : ""}`} key={task.id}>
-                <div>
-                  <strong>{task.assigned_to === user?.id ? "🔴 " : "⚪ "}{task.title}</strong>
-                  <small>{weeklyTopicTitle(task.topic_id)} · {weeklyEmployeeName(task.assigned_to)}{task.due_date ? ` · échéance ${task.due_date}` : ""}</small>
-                </div>
-                {(task.assigned_to === user?.id || user?.role === "admin" || user?.role === "direction") && (
-                  <button className="btn small primary" onClick={() => completeWeeklyDashboardTask(task)}>✅ Valider</button>
-                )}
-              </div>
-            ))
-          )}
         </div>
-
-        )}
-
-        {isManagerUser && (
-        <div className="card dashboard-weekly-tasks">
-          <div className="page-head">
-            <div><h3>📌 Sujets à traiter</h3><p>Vision globale des sujets ouverts.</p></div>
-            <strong>{visibleWeeklyTopics.length}</strong>
-          </div>
-
-          {visibleWeeklyTopics.length === 0 ? (
-            <p>Aucun sujet ouvert.</p>
-          ) : (
-            visibleWeeklyTopics.slice(0, 8).map((topic) => (
-              <div className="dashboard-weekly-task-row" key={topic.id}>
-                <div>
-                  <strong>{topic.priority === "critical" ? "🚨 " : topic.priority === "high" ? "🟠 " : "📌 "}{topic.title}</strong>
-                  <small>Semaine du {topic.week_date || "-"} · {topic.status === "in_progress" ? "en cours" : "à traiter"}</small>
-                </div>
-              </div>
-            ))
-          )}
-        </div>
-        )}
-      </div>
+      )}
 
       <div className="card revenue-summary-card">
         <div className="page-head">

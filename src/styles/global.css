@@ -7385,4 +7385,16 @@ textarea:focus {
     margin-top: 10px;
   }
 }
+.dashboard-weekly-grid-team-only {
+  grid-template-columns: 1fr;
+}
+
+.dashboard-weekly-grid-team-only .dashboard-weekly-tasks {
+  max-width: none;
+}
+
+.dashboard-weekly-grid-team-only .dashboard-weekly-task-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+}
 

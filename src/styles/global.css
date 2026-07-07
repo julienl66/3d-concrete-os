@@ -7157,3 +7157,126 @@ textarea:focus {
   color: #64748b;
   font-weight: 800;
 }
+.dashboard-action-hero {
+  display: grid;
+  grid-template-columns: 1fr 1.2fr;
+  gap: 18px;
+  margin-bottom: 18px;
+  padding: 24px;
+  border-radius: 30px;
+  background: linear-gradient(135deg, #111827, #1e293b);
+  color: white;
+}
+
+.dashboard-action-title span,
+.dashboard-action-title strong,
+.dashboard-action-title p {
+  display: block;
+}
+
+.dashboard-action-title span {
+  color: #cbd5e1;
+  text-transform: uppercase;
+  font-weight: 1000;
+  letter-spacing: 0.06em;
+}
+
+.dashboard-action-title strong {
+  font-size: 58px;
+  line-height: 1;
+  margin: 8px 0;
+}
+
+.dashboard-action-title p {
+  margin: 0;
+  color: #e2e8f0;
+}
+
+.dashboard-action-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+
+.dashboard-action-stats div {
+  border-radius: 22px;
+  padding: 16px;
+  background: rgba(255,255,255,0.10);
+}
+
+.dashboard-action-stats span,
+.dashboard-action-stats strong {
+  display: block;
+}
+
+.dashboard-action-stats strong {
+  font-size: 34px;
+  margin-top: 6px;
+}
+
+.dashboard-weekly-grid {
+  display: grid;
+  grid-template-columns: 1.15fr 1fr 1fr;
+  gap: 18px;
+  margin-bottom: 18px;
+}
+
+.dashboard-my-tasks {
+  border-color: #fecaca !important;
+}
+
+.dashboard-weekly-task-row.late {
+  background: #fef2f2;
+  border-radius: 14px;
+  padding-left: 10px;
+  padding-right: 10px;
+}
+
+.weekly-global-tasks {
+  margin-bottom: 18px;
+}
+
+.weekly-global-task-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 12px;
+}
+
+.weekly-global-task-card {
+  border-radius: 18px;
+  padding: 14px;
+  border: 1px solid #e5e7eb;
+  background: #f8fafc;
+}
+
+.weekly-global-task-card.late,
+.weekly-task-row.late {
+  border-color: #fecaca;
+  background: #fef2f2;
+}
+
+.weekly-global-task-card strong,
+.weekly-global-task-card small {
+  display: block;
+}
+
+.weekly-global-task-card small {
+  margin-top: 4px;
+  color: #64748b;
+  font-weight: 800;
+}
+
+.weekly-global-task-card button {
+  margin-top: 10px;
+}
+
+@media (max-width: 1250px) {
+  .dashboard-action-hero,
+  .dashboard-weekly-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .dashboard-action-stats {
+    grid-template-columns: 1fr;
+  }
+}

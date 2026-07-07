@@ -366,6 +366,31 @@ export default function WeeklyPoints({ user, permissions }) {
         </div>
       </div>
 
+      <div className="card weekly-global-tasks">
+        <div className="page-head">
+          <div>
+            <h3>Vue globale des tâches</h3>
+            <p>Toutes les tâches assignées, visibles par responsable et statut.</p>
+          </div>
+        </div>
+
+        <div className="weekly-global-task-grid">
+          {tasks.filter((task) => task.status !== "done").length === 0 ? (
+            <p>Aucune tâche en attente.</p>
+          ) : (
+            tasks.filter((task) => task.status !== "done").map((task) => (
+              <div className={`weekly-global-task-card ${task.due_date && String(task.due_date) < new Date().toISOString().slice(0, 10) ? "late" : ""}`} key={task.id}>
+                <strong>❌ {task.title}</strong>
+                <small>{employeeName(task.assigned_to)}</small>
+                <small>{topics.find((topic) => topic.id === task.topic_id)?.title || "Point hebdo"}</small>
+                {task.due_date && <small>Échéance : {task.due_date}</small>}
+                <button className="btn small primary" onClick={() => completeTask(task)}>✅ Valider</button>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+
       <div className="weekly-layout">
         <div className="card">
           <h3>Ajouter un sujet</h3>
@@ -525,9 +550,9 @@ export default function WeeklyPoints({ user, permissions }) {
                       <p>Aucune tâche assignée.</p>
                     ) : (
                       linkedTasks.map((task) => (
-                        <div className={`weekly-task-row ${task.status}`} key={task.id}>
+                        <div className={`weekly-task-row ${task.status} ${task.due_date && task.status !== "done" && String(task.due_date) < new Date().toISOString().slice(0, 10) ? "late" : ""}`} key={task.id}>
                           <div>
-                            <strong>{task.title}</strong>
+                            <strong>{task.status === "done" ? "✅ " : "❌ "}{task.title}</strong>
                             <small>
                               Assignée à {employeeName(task.assigned_to)}
                               {task.due_date ? ` · échéance ${task.due_date}` : ""}

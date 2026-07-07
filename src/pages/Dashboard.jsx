@@ -10,6 +10,7 @@ export default function Dashboard({ user }) {
   const [punchEvents, setPunchEvents] = useState([]);
   const [revenueEntries, setRevenueEntries] = useState([]);
   const [weeklyTasks, setWeeklyTasks] = useState([]);
+  const [weeklyTopics, setWeeklyTopics] = useState([]);
   const [crmContacts, setCrmContacts] = useState([]);
   const [crmInteractions, setCrmInteractions] = useState([]);
   const [message, setMessage] = useState("");
@@ -661,10 +662,18 @@ export default function Dashboard({ user }) {
     await loadDashboard();
   }
 
-  const dashboardWeeklyTasks = weeklyTasks.filter((task) => {
+  const myWeeklyTasks = weeklyTasks.filter((task) => task.assigned_to === user?.id);
+  const unassignedWeeklyTasks = weeklyTasks.filter((task) => !task.assigned_to);
+  const allWeeklyTasksVisible = weeklyTasks.filter((task) => {
+    if (user?.role === "admin" || user?.role === "direction") return true;
     if (!task.assigned_to) return true;
-    return task.assigned_to === user?.id || user?.role === "admin" || user?.role === "direction";
+    return task.assigned_to === user?.id;
   });
+  const overdueWeeklyTasks = allWeeklyTasksVisible.filter((task) => {
+    if (!task.due_date) return false;
+    return String(task.due_date) < new Date().toISOString().slice(0, 10);
+  });
+  const dashboardWeeklyTasks = allWeeklyTasksVisible;
 
   async function completeWeeklyDashboardTask(task) {
     const { error } = await supabase
@@ -835,39 +844,90 @@ export default function Dashboard({ user }) {
         </div>
       </div>
 
-      <div className="card dashboard-weekly-tasks">
-        <div className="page-head">
-          <div>
-            <h3>Tâches du point hebdo</h3>
-            <p>Tâches assignées à réaliser. Elles restent visibles tant qu'elles ne sont pas validées.</p>
-          </div>
-          <strong>{dashboardWeeklyTasks.length}</strong>
+      <div className="dashboard-action-hero">
+        <div className="dashboard-action-title">
+          <span>À faire maintenant</span>
+          <strong>{myWeeklyTasks.length}</strong>
+          <p>Mes tâches assignées issues des points hebdomadaires.</p>
         </div>
 
-        {dashboardWeeklyTasks.length === 0 ? (
-          <p>Aucune tâche hebdo en attente.</p>
-        ) : (
-          dashboardWeeklyTasks.slice(0, 10).map((task) => (
-            <div className="dashboard-weekly-task-row" key={task.id}>
-              <div>
-                <strong>{task.title}</strong>
-                <small>
-                  {task.weekly_topics?.title || "Point hebdo"}
-                  {" · "}
-                  {task.employees?.name || "Non assignée"}
-                  {task.due_date ? ` · échéance ${task.due_date}` : ""}
-                </small>
-              </div>
-
-              <button className="btn small primary" onClick={() => completeWeeklyDashboardTask(task)}>
-                ✅ Valider
-              </button>
-            </div>
-          ))
-        )}
+        <div className="dashboard-action-stats">
+          <div><span>En retard</span><strong>{overdueWeeklyTasks.length}</strong></div>
+          <div><span>Non assignées</span><strong>{unassignedWeeklyTasks.length}</strong></div>
+          <div><span>Sujets ouverts</span><strong>{weeklyTopics.length}</strong></div>
+        </div>
       </div>
 
-      <div className="card revenue-summary-card">
+      <div className="dashboard-weekly-grid">
+        <div className="card dashboard-weekly-tasks dashboard-my-tasks">
+          <div className="page-head">
+            <div>
+              <h3>🔴 Mes tâches</h3>
+              <p>Visible dès l'ouverture de l'application.</p>
+            </div>
+            <strong>{myWeeklyTasks.length}</strong>
+          </div>
+
+          {myWeeklyTasks.length === 0 ? (
+            <p>Aucune tâche assignée à toi.</p>
+          ) : (
+            myWeeklyTasks.slice(0, 8).map((task) => (
+              <div className={`dashboard-weekly-task-row ${task.due_date && String(task.due_date) < new Date().toISOString().slice(0, 10) ? "late" : ""}`} key={task.id}>
+                <div>
+                  <strong>🔴 {task.title}</strong>
+                  <small>{task.weekly_topics?.title || "Point hebdo"}{task.due_date ? ` · échéance ${task.due_date}` : ""}</small>
+                </div>
+                <button className="btn small primary" onClick={() => completeWeeklyDashboardTask(task)}>✅ Valider</button>
+              </div>
+            ))
+          )}
+        </div>
+
+        <div className="card dashboard-weekly-tasks">
+          <div className="page-head">
+            <div><h3>👥 Tâches équipe</h3><p>Vue commune des actions en attente.</p></div>
+            <strong>{dashboardWeeklyTasks.length}</strong>
+          </div>
+
+          {dashboardWeeklyTasks.length === 0 ? (
+            <p>Aucune tâche hebdo en attente.</p>
+          ) : (
+            dashboardWeeklyTasks.slice(0, 8).map((task) => (
+              <div className={`dashboard-weekly-task-row ${task.due_date && String(task.due_date) < new Date().toISOString().slice(0, 10) ? "late" : ""}`} key={task.id}>
+                <div>
+                  <strong>{task.assigned_to === user?.id ? "🔴 " : "⚪ "}{task.title}</strong>
+                  <small>{task.weekly_topics?.title || "Point hebdo"} · {task.employees?.name || "Non assignée"}{task.due_date ? ` · échéance ${task.due_date}` : ""}</small>
+                </div>
+                {(task.assigned_to === user?.id || user?.role === "admin" || user?.role === "direction") && (
+                  <button className="btn small primary" onClick={() => completeWeeklyDashboardTask(task)}>✅ Valider</button>
+                )}
+              </div>
+            ))
+          )}
+        </div>
+
+        <div className="card dashboard-weekly-tasks">
+          <div className="page-head">
+            <div><h3>📌 Sujets à traiter</h3><p>Vision globale des sujets ouverts.</p></div>
+            <strong>{weeklyTopics.length}</strong>
+          </div>
+
+          {weeklyTopics.length === 0 ? (
+            <p>Aucun sujet ouvert.</p>
+          ) : (
+            weeklyTopics.slice(0, 8).map((topic) => (
+              <div className="dashboard-weekly-task-row" key={topic.id}>
+                <div>
+                  <strong>{topic.priority === "critical" ? "🚨 " : topic.priority === "high" ? "🟠 " : "📌 "}{topic.title}</strong>
+                  <small>Semaine du {topic.week_date || "-"} · {topic.status === "in_progress" ? "en cours" : "à traiter"}</small>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+
+<div className="card revenue-summary-card">
         <div className="page-head">
           <div>
             <h3>CA réalisé</h3>

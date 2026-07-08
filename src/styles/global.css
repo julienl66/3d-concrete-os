@@ -8218,3 +8218,59 @@ textarea:focus {
     grid-template-columns: 1fr;
   }
 }
+.planning-employee-filter-card {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  align-items: end;
+  margin-bottom: 18px;
+}
+
+.planning-employee-filter-card > div:first-child {
+  min-width: 320px;
+}
+
+.planning-filter-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.planning-assignees-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+.planning-assignees-head label {
+  margin-right: auto;
+}
+
+.planning-assignees-head strong {
+  border-radius: 999px;
+  padding: 5px 10px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: 12px;
+}
+
+.planning-employee-checklist label.selected {
+  background: #ecfdf5;
+  border-color: #86efac;
+}
+
+.planning-employee-checklist label.selected span {
+  color: #166534;
+}
+
+@media (max-width: 800px) {
+  .planning-employee-filter-card {
+    display: block;
+  }
+
+  .planning-filter-actions {
+    margin-top: 10px;
+  }
+}

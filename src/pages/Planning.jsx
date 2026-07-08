@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { supabase } from "../services/supabase.js";
+import { emitEvent } from "../services/events.js";
 
 const PRIORITIES = [
   { value: "low", label: "Basse" },
@@ -29,16 +30,19 @@ export default function Planning({ user }) {
   const [taskTypes, setTaskTypes] = useState([]);
   const [resources, setResources] = useState([]);
   const [taskResources, setTaskResources] = useState([]);
+  const [taskAssignments, setTaskAssignments] = useState([]);
   const [dayTasks, setDayTasks] = useState([]);
   const [message, setMessage] = useState("");
   const [modalOpen, setModalOpen] = useState(false);
   const [viewMode, setViewMode] = useState("calendar");
+  const [selectedEmployeeFilter, setSelectedEmployeeFilter] = useState("all");
   const [editingTask, setEditingTask] = useState(null);
 
   const [form, setForm] = useState({
     task_date: "",
     project_id: "",
     employee_id: "",
+    employee_ids: [],
     task_type_id: "",
     resource_id: "",
     title: "",
@@ -55,7 +59,7 @@ export default function Planning({ user }) {
     const monthStart = new Date(calendarDate.getFullYear(), calendarDate.getMonth(), 1);
     const monthEnd = new Date(calendarDate.getFullYear(), calendarDate.getMonth() + 1, 0);
 
-    const [projectsResponse, employeesResponse, taskTypesResponse, resourcesResponse, tasksResponse, taskResourcesResponse] = await Promise.all([
+    const [projectsResponse, employeesResponse, taskTypesResponse, resourcesResponse, tasksResponse, taskResourcesResponse, taskAssignmentsResponse] = await Promise.all([
       supabase.from("projects").select("*").eq("active", true).order("name"),
       supabase.from("employees").select("*").eq("active", true).order("name"),
       supabase.from("production_task_types").select("*").eq("active", true).order("name"),
@@ -73,7 +77,10 @@ export default function Planning({ user }) {
         .order("task_date", { ascending: true }),
       supabase
         .from("production_task_resources")
-        .select("*, resources(name, resource_type, status)")
+        .select("*, resources(name, resource_type, status)"),
+      supabase
+        .from("production_task_assignments")
+        .select("*, employees(name)")
     ]);
 
     const error =
@@ -82,7 +89,8 @@ export default function Planning({ user }) {
       taskTypesResponse.error ||
       resourcesResponse.error ||
       tasksResponse.error ||
-      taskResourcesResponse.error;
+      taskResourcesResponse.error ||
+      taskAssignmentsResponse.error;
 
     if (error) {
       setMessage(error.message);
@@ -95,6 +103,7 @@ export default function Planning({ user }) {
     setResources(resourcesResponse.data || []);
     setDayTasks(tasksResponse.data || []);
     setTaskResources(taskResourcesResponse.data || []);
+    setTaskAssignments(taskAssignmentsResponse.data || []);
   }
 
   function dateToInputValue(date) {
@@ -165,19 +174,45 @@ export default function Planning({ user }) {
   function tasksForDay(day) {
     if (!day) return [];
     const value = dateToInputValue(day);
-    return dayTasks.filter((task) => task.task_date === value);
+    return dayTasks.filter((task) => task.task_date === value && taskMatchesEmployeeFilter(task));
+  }
+
+  function employeesForTask(taskId) {
+    return taskAssignments.filter((row) => row.task_id === taskId);
+  }
+
+  function taskEmployeeIds(task) {
+    const rows = employeesForTask(task.id);
+    if (rows.length > 0) return rows.map((row) => row.employee_id);
+    return task.employee_id ? [task.employee_id] : [];
+  }
+
+  function taskMatchesEmployeeFilter(task) {
+    if (selectedEmployeeFilter === "all") return true;
+    if (selectedEmployeeFilter === "unassigned") return taskEmployeeIds(task).length === 0;
+    return taskEmployeeIds(task).includes(selectedEmployeeFilter);
+  }
+
+  function visibleEmployees() {
+    if (selectedEmployeeFilter === "all") return employees;
+    if (selectedEmployeeFilter === "unassigned") return [];
+    return employees.filter((employee) => employee.id === selectedEmployeeFilter);
   }
 
   function tasksForEmployeeDay(employeeId, day) {
     if (!day) return [];
     const value = dateToInputValue(day);
-    return dayTasks.filter((task) => task.task_date === value && task.employee_id === employeeId);
+    return dayTasks.filter((task) => {
+      if (task.task_date !== value) return false;
+      return taskEmployeeIds(task).includes(employeeId);
+    });
   }
 
   function unassignedTasksForDay(day) {
     if (!day) return [];
     const value = dateToInputValue(day);
-    return dayTasks.filter((task) => task.task_date === value && !task.employee_id);
+    if (selectedEmployeeFilter !== "all" && selectedEmployeeFilter !== "unassigned") return [];
+    return dayTasks.filter((task) => task.task_date === value && taskEmployeeIds(task).length === 0);
   }
 
   function resourcesForTask(taskId) {
@@ -228,7 +263,7 @@ export default function Planning({ user }) {
 
   function openCreateEmployeeTask(employeeId, day) {
     openCreateTask(day);
-    setForm((current) => ({ ...current, employee_id: employeeId || "" }));
+    setForm((current) => ({ ...current, employee_id: employeeId || "", employee_ids: employeeId ? [employeeId] : [] }));
   }
 
   async function moveTask(task, patch) {
@@ -254,6 +289,7 @@ export default function Planning({ user }) {
       task_date: dateToInputValue(day),
       project_id: "",
       employee_id: "",
+      employee_ids: [],
       task_type_id: defaultType,
       resource_id: "",
       title: "",
@@ -270,6 +306,7 @@ export default function Planning({ user }) {
       task_date: task.task_date || "",
       project_id: task.project_id || "",
       employee_id: task.employee_id || "",
+      employee_ids: taskEmployeeIds(task),
       task_type_id: task.task_type_id || "",
       resource_id: taskResources.find((row) => row.task_id === task.id)?.resource_id || "",
       title: task.title || "",
@@ -294,7 +331,7 @@ export default function Planning({ user }) {
     const payload = {
       task_date: form.task_date,
       project_id: form.project_id || null,
-      employee_id: form.employee_id || null,
+      employee_id: (form.employee_ids?.[0] || form.employee_id) || null,
       task_type_id: form.task_type_id || null,
       title: form.title,
       notes: form.notes || null,
@@ -333,6 +370,40 @@ export default function Planning({ user }) {
           return;
         }
       }
+
+      await supabase
+        .from("production_task_assignments")
+        .delete()
+        .eq("task_id", savedTask.id);
+
+      const assignmentRows = (form.employee_ids || []).map((employeeId) => ({
+        task_id: savedTask.id,
+        employee_id: employeeId,
+      }));
+
+      if (assignmentRows.length > 0) {
+        const { error: assignmentError } = await supabase
+          .from("production_task_assignments")
+          .insert(assignmentRows);
+
+        if (assignmentError) {
+          setMessage(assignmentError.message);
+          return;
+        }
+      }
+
+      await emitEvent({
+        event_type: editingTask ? "PLANNING_TASK_UPDATED" : "PLANNING_TASK_CREATED",
+        entity_type: "planning_task",
+        entity_id: savedTask.id,
+        title: editingTask ? `Tâche modifiée : ${savedTask.title}` : `Tâche créée : ${savedTask.title}`,
+        payload: {
+          task_date: savedTask.task_date,
+          employee_ids: form.employee_ids || [],
+          project_id: savedTask.project_id || null,
+        },
+        user,
+      });
     }
 
     setModalOpen(false);
@@ -395,7 +466,28 @@ export default function Planning({ user }) {
   }
 
   function employeeLabel(task) {
+    const assigned = employeesForTask(task.id);
+
+    if (assigned.length > 0) {
+      return assigned.map((row) => row.employees?.name || "Employé").join(", ");
+    }
+
     return task.employee?.name || "Non affecté";
+  }
+
+  function toggleEmployee(employeeId) {
+    setForm((current) => {
+      const currentIds = current.employee_ids || [];
+      const nextIds = currentIds.includes(employeeId)
+        ? currentIds.filter((id) => id !== employeeId)
+        : [...currentIds, employeeId];
+
+      return {
+        ...current,
+        employee_ids: nextIds,
+        employee_id: nextIds[0] || "",
+      };
+    });
   }
 
   function addDays(date, days) {
@@ -471,20 +563,22 @@ export default function Planning({ user }) {
     loadData();
   }
 
+  const visibleDayTasks = dayTasks.filter(taskMatchesEmployeeFilter);
+
   const ganttProjects = projects
     .map((project) => ({
       ...project,
-      tasks: dayTasks
+      tasks: visibleDayTasks
         .filter((task) => task.project_id === project.id)
         .sort((a, b) => new Date(taskStart(a)) - new Date(taskStart(b))),
     }))
     .filter((project) => project.tasks.length > 0);
 
-  const ganttUnassignedTasks = dayTasks.filter((task) => !task.project_id);
+  const ganttUnassignedTasks = visibleDayTasks.filter((task) => !task.project_id);
 
-  const monthTasks = dayTasks.length;
-  const doneTasks = dayTasks.filter((task) => task.status === "done").length;
-  const activeTasks = dayTasks.filter((task) => task.status === "in_progress").length;
+  const monthTasks = visibleDayTasks.length;
+  const doneTasks = visibleDayTasks.filter((task) => task.status === "done").length;
+  const activeTasks = visibleDayTasks.filter((task) => task.status === "in_progress").length;
 
   return (
     <section className="page">
@@ -503,6 +597,35 @@ export default function Planning({ user }) {
       </div>
 
       {message && <div className="alert info">{message}</div>}
+
+      <div className="card planning-employee-filter-card">
+        <div>
+          <label>Filtrer le planning par employé</label>
+          <select
+            value={selectedEmployeeFilter}
+            onChange={(e) => setSelectedEmployeeFilter(e.target.value)}
+          >
+            <option value="all">Toutes les tâches</option>
+            <option value="unassigned">Tâches non affectées</option>
+            {visibleEmployees().map((employee) => (
+              <option key={employee.id} value={employee.id}>
+                {employee.name}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="planning-filter-actions">
+          <button className="btn small" onClick={() => setSelectedEmployeeFilter("all")}>
+            Tout voir
+          </button>
+          <button className="btn small primary" onClick={() => setViewMode("atelier")}>
+            Voir par employé
+          </button>
+        </div>
+      </div>
+
+
 
       <div className="stats-grid">
         <div className="stat-card">
@@ -735,6 +858,7 @@ export default function Planning({ user }) {
               </div>
             ))}
 
+            {(selectedEmployeeFilter === "all" || selectedEmployeeFilter === "unassigned") && (
             <div className="atelier-week-row">
               <div className="atelier-employee-name">
                 <strong>Non affecté</strong>
@@ -770,6 +894,7 @@ export default function Planning({ user }) {
                 );
               })}
             </div>
+            )}
           </div>
         </div>
       )}
@@ -946,19 +1071,41 @@ export default function Planning({ user }) {
                 </select>
               </div>
 
-              <div>
-                <label>Employé affecté</label>
-                <select
-                  value={form.employee_id}
-                  onChange={(e) => setForm({ ...form, employee_id: e.target.value })}
-                >
-                  <option value="">Non affecté</option>
+              <div style={{ gridColumn: "1 / -1" }}>
+                <div className="planning-assignees-head">
+                  <label>Employés affectés</label>
+                  <strong>{(form.employee_ids || []).length} personne(s) sélectionnée(s)</strong>
+                  <button
+                    type="button"
+                    className="btn small"
+                    onClick={() => setForm({ ...form, employee_ids: employees.map((employee) => employee.id), employee_id: employees[0]?.id || "" })}
+                  >
+                    Tout sélectionner
+                  </button>
+                  <button
+                    type="button"
+                    className="btn small"
+                    onClick={() => setForm({ ...form, employee_ids: [], employee_id: "" })}
+                  >
+                    Vider
+                  </button>
+                </div>
+
+                <div className="planning-employee-checklist">
                   {employees.map((employee) => (
-                    <option key={employee.id} value={employee.id}>
-                      {employee.name}
-                    </option>
+                    <label
+                      key={employee.id}
+                      className={(form.employee_ids || []).includes(employee.id) ? "selected" : ""}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={(form.employee_ids || []).includes(employee.id)}
+                        onChange={() => toggleEmployee(employee.id)}
+                      />
+                      <span>{employee.name}</span>
+                    </label>
                   ))}
-                </select>
+                </div>
               </div>
 
               <div>

@@ -88,6 +88,7 @@ export default function CRM({ user, permissions }) {
       priority: selectedContact.priority || "normal",
       project_id: selectedContact.project_id || "",
       quote_id: selectedContact.quote_id || "",
+      dossier_code: selectedContact.dossier_code || "",
       notes: selectedContact.notes || "",
     });
   }, [selectedContact]);
@@ -498,6 +499,97 @@ export default function CRM({ user, permissions }) {
     await loadData();
   }
 
+  function generateDossierCode() {
+    const year = new Date().getFullYear();
+    const number = String(Math.floor(Date.now() % 100000)).padStart(5, "0");
+    return `DOS-${year}-${number}`;
+  }
+
+  function generateProjectCodeFromOpportunity(contact) {
+    const city = String(contact.city || contact.company_name || "PROJET")
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^a-zA-Z0-9]/g, "")
+      .slice(0, 4)
+      .toUpperCase();
+
+    return `${city || "PROJ"}-${new Date().getFullYear()}-${String(Math.floor(Date.now() % 10000)).padStart(4, "0")}`;
+  }
+
+  async function createProjectFromOpportunity(contact) {
+    if (!contact) return;
+
+    if (!can("can_create")) {
+      setMessage("Action non autorisée.");
+      return;
+    }
+
+    const ok = window.confirm(`Créer un projet depuis l'opportunité "${contact.company_name}" ?`);
+    if (!ok) return;
+
+    const dossierCode = contact.dossier_code || generateDossierCode();
+
+    const { data: project, error } = await supabase
+      .from("projects")
+      .insert({
+        project_code: generateProjectCodeFromOpportunity(contact),
+        dossier_code: dossierCode,
+        name: contact.product_family
+          ? `${contact.product_family} - ${contact.company_name}`
+          : `Projet - ${contact.company_name}`,
+        client_name: contact.company_name,
+        crm_contact_id: contact.id,
+        description: contact.notes || null,
+        active: true,
+        status: "validated",
+        estimated_hours: 0,
+        progress_percent: 0,
+        project_color: "#2563eb",
+        sale_amount: Number(contact.estimated_amount || 0),
+        expected_signature_month: contact.expected_signature_month || null,
+      })
+      .select()
+      .single();
+
+    if (error) {
+      setMessage(error.message);
+      return;
+    }
+
+    await supabase
+      .from("crm_contacts")
+      .update({
+        project_id: project.id,
+        dossier_code: dossierCode,
+      })
+      .eq("id", contact.id);
+
+    await emitEvent({
+      event_type: "PROJECT_CREATED_FROM_CRM",
+      entity_type: "project",
+      entity_id: project.id,
+      title: `Projet créé depuis CRM : ${project.name}`,
+      description: contact.company_name,
+      payload: {
+        crm_contact_id: contact.id,
+        project_id: project.id,
+        project_code: project.project_code,
+        dossier_code: dossierCode,
+        estimated_amount: Number(contact.estimated_amount || 0),
+      },
+      user,
+    });
+
+    setSelectedContact({
+      ...contact,
+      project_id: project.id,
+      dossier_code: dossierCode,
+    });
+
+    setMessage(`Projet créé : ${project.project_code || ""} ${project.name}`);
+    await loadData();
+  }
+
   async function saveOpportunity(e) {
     e.preventDefault();
 
@@ -528,6 +620,7 @@ export default function CRM({ user, permissions }) {
       priority: opportunityForm.priority || "normal",
       project_id: opportunityForm.project_id || null,
       quote_id: opportunityForm.quote_id || null,
+      dossier_code: opportunityForm.dossier_code || null,
       notes: opportunityForm.notes || null,
     };
 
@@ -1655,6 +1748,7 @@ export default function CRM({ user, permissions }) {
               <div><span>Signature prévue</span><strong>{selectedContact.expected_signature_month || "-"}</strong></div>
               <div><span>Famille</span><strong>{selectedContact.product_family || "-"}</strong></div>
               <div><span>Secteur</span><strong>{selectedContact.sector || "-"}</strong></div>
+              <div><span>Dossier</span><strong>{selectedContact.dossier_code || "-"}</strong></div>
             </div>
 
             <div className="crm-contact-actions">
@@ -1666,6 +1760,9 @@ export default function CRM({ user, permissions }) {
               </button>
               <button className="btn small" onClick={() => openMaps(selectedContact)}>
                 Itinéraire
+              </button>
+              <button className="btn primary" onClick={() => createProjectFromOpportunity(selectedContact)}>
+                Créer projet
               </button>
             </div>
 
@@ -1803,6 +1900,11 @@ export default function CRM({ user, permissions }) {
                         </option>
                       ))}
                     </select>
+                  </div>
+
+                  <div>
+                    <label>Code dossier</label>
+                    <input value={opportunityForm.dossier_code} onChange={(e) => updateOpportunityForm("dossier_code", e.target.value)} placeholder="DOS-2026-0001" />
                   </div>
 
                   <div className="crm-drawer-full">

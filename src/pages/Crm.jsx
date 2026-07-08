@@ -16,6 +16,7 @@ export default function CRM({ user, permissions }) {
   const [message, setMessage] = useState("");
   const [viewMode, setViewMode] = useState("board");
   const [search, setSearch] = useState("");
+  const [activeCall, setActiveCall] = useState(null);
 
   const [contactForm, setContactForm] = useState({
     company_name: "",
@@ -25,6 +26,17 @@ export default function CRM({ user, permissions }) {
     city: "",
     contact_type: "prospect",
     assigned_to: "",
+    estimated_amount: "",
+    margin_percent: "",
+    probability_percent: "30",
+    expected_signature_month: new Date().toISOString().slice(0, 7),
+    product_family: "",
+    sector: "",
+    lead_source: "",
+    competitor: "",
+    priority: "normal",
+    project_id: "",
+    quote_id: "",
     notes: "",
   });
 
@@ -477,6 +489,17 @@ export default function CRM({ user, permissions }) {
       city: contactForm.city || null,
       contact_type: contactForm.contact_type || "prospect",
       assigned_to: contactForm.assigned_to || null,
+      estimated_amount: Number(contactForm.estimated_amount || 0),
+      margin_percent: contactForm.margin_percent ? Number(contactForm.margin_percent) : null,
+      probability_percent: contactForm.probability_percent ? Number(contactForm.probability_percent) : null,
+      expected_signature_month: contactForm.expected_signature_month || null,
+      product_family: contactForm.product_family || null,
+      sector: contactForm.sector || null,
+      lead_source: contactForm.lead_source || null,
+      competitor: contactForm.competitor || null,
+      priority: contactForm.priority || "normal",
+      project_id: contactForm.project_id || null,
+      quote_id: contactForm.quote_id || null,
       notes: contactForm.notes || null,
       stage_id: firstStage?.id || null,
       status: "active",
@@ -496,6 +519,17 @@ export default function CRM({ user, permissions }) {
       city: "",
       contact_type: "prospect",
       assigned_to: "",
+      estimated_amount: "",
+      margin_percent: "",
+      probability_percent: "30",
+      expected_signature_month: new Date().toISOString().slice(0, 7),
+      product_family: "",
+      sector: "",
+      lead_source: "",
+      competitor: "",
+      priority: "normal",
+      project_id: "",
+      quote_id: "",
       notes: "",
     });
 
@@ -543,6 +577,24 @@ export default function CRM({ user, permissions }) {
     const city = window.prompt("Ville ?", contact.city || "");
     if (city === null) return;
 
+    const amount = window.prompt("Montant estimé HT ?", contact.estimated_amount || "");
+    if (amount === null) return;
+
+    const probability = window.prompt("Probabilité de signature % ?", contact.probability_percent || contact.probability || "");
+    if (probability === null) return;
+
+    const forecastMonth = window.prompt("Mois prévisionnel de signature ? Format AAAA-MM", contact.expected_signature_month || "");
+    if (forecastMonth === null) return;
+
+    const productFamily = window.prompt("Famille produit ?", contact.product_family || "");
+    if (productFamily === null) return;
+
+    const sector = window.prompt("Secteur ?", contact.sector || "");
+    if (sector === null) return;
+
+    const priority = window.prompt("Priorité : low / normal / high / critical", contact.priority || "normal");
+    if (priority === null) return;
+
     const { error } = await supabase
       .from("crm_contacts")
       .update({
@@ -551,6 +603,12 @@ export default function CRM({ user, permissions }) {
         email: email || null,
         phone: phone || null,
         city: city || null,
+        estimated_amount: Number(amount || 0),
+        probability_percent: probability ? Number(probability) : null,
+        expected_signature_month: forecastMonth || null,
+        product_family: productFamily || null,
+        sector: sector || null,
+        priority: priority || "normal",
       })
       .eq("id", contact.id);
 
@@ -754,6 +812,134 @@ export default function CRM({ user, permissions }) {
     await loadData();
   }
 
+  function cleanPhone(phone) {
+    return String(phone || "").replace(/[^\d+]/g, "");
+  }
+
+  function openPhone(contact) {
+    if (!contact?.phone) {
+      setMessage("Aucun numéro de téléphone sur ce contact.");
+      return;
+    }
+
+    const phone = cleanPhone(contact.phone);
+
+    setActiveCall({
+      contact,
+      phone,
+      startedAt: new Date().toISOString(),
+    });
+
+    window.location.href = `tel:${phone}`;
+  }
+
+  function openEmail(contact) {
+    if (!contact?.email) {
+      setMessage("Aucun email sur ce contact.");
+      return;
+    }
+
+    window.location.href = `mailto:${contact.email}`;
+  }
+
+  async function saveCallInteraction(status = "called") {
+    if (!activeCall?.contact) return;
+
+    const endedAt = new Date().toISOString();
+    const startedAt = activeCall.startedAt || endedAt;
+    const durationSeconds = Math.max(
+      0,
+      Math.round((new Date(endedAt) - new Date(startedAt)) / 1000)
+    );
+
+    const notes = window.prompt("Notes d'appel ?", "");
+    if (notes === null) return;
+
+    const nextAction = window.prompt("Action suivante / relance ?", "");
+    if (nextAction === null) return;
+
+    const nextDate = window.prompt("Date de relance ? Format AAAA-MM-JJ. Laisse vide si aucune.", "");
+    if (nextDate === null) return;
+
+    const { error } = await supabase.from("crm_interactions").insert({
+      contact_id: activeCall.contact.id,
+      interaction_type: "appel",
+      subject: `Appel ${status}`,
+      notes: notes || null,
+      next_action: nextAction || null,
+      next_action_date: nextDate || null,
+      call_started_at: startedAt,
+      call_ended_at: endedAt,
+      call_duration_seconds: durationSeconds,
+      call_status: status,
+      created_by: user?.id || null,
+    });
+
+    if (error) {
+      setMessage(error.message);
+      return;
+    }
+
+    setActiveCall(null);
+    setMessage("Appel enregistré dans le CRM.");
+    await loadData();
+  }
+
+  async function quickLogEmail(contact) {
+    if (!contact) return;
+
+    const subject = window.prompt("Sujet de l'email ?", "Email envoyé");
+    if (subject === null) return;
+
+    const nextAction = window.prompt("Action suivante / relance ?", "");
+    if (nextAction === null) return;
+
+    const nextDate = window.prompt("Date de relance ? Format AAAA-MM-JJ. Laisse vide si aucune.", "");
+    if (nextDate === null) return;
+
+    const { error } = await supabase.from("crm_interactions").insert({
+      contact_id: contact.id,
+      interaction_type: "email",
+      subject: subject || "Email envoyé",
+      next_action: nextAction || null,
+      next_action_date: nextDate || null,
+      created_by: user?.id || null,
+    });
+
+    if (error) {
+      setMessage(error.message);
+      return;
+    }
+
+    setMessage("Email enregistré dans le CRM.");
+    await loadData();
+  }
+
+  function openMaps(contact) {
+    const query = encodeURIComponent(`${contact.company_name || ""} ${contact.city || ""}`.trim());
+    if (!query) return;
+    window.open(`https://www.google.com/maps/search/?api=1&query=${query}`, "_blank");
+  }
+
+  function formatMoney(value) {
+    return `${Number(value || 0).toLocaleString("fr-FR", { maximumFractionDigits: 0 })} €`;
+  }
+
+  function weightedPipe(contact) {
+    return Number(contact.estimated_amount || 0) * (Number(contact.probability_percent || contact.probability || 0) / 100);
+  }
+
+  function priorityLabel(value) {
+    const labels = {
+      low: "Basse",
+      normal: "Normale",
+      high: "Haute",
+      critical: "Critique",
+    };
+
+    return labels[value] || value || "Normale";
+  }
+
   function contactCard(contact) {
     return (
       <div
@@ -766,8 +952,20 @@ export default function CRM({ user, permissions }) {
         <strong>{contact.company_name}</strong>
         <small>{contact.contact_name || "-"} · {contact.city || "-"}</small>
         <small>{employeeName(contact.assigned_to)}</small>
+        <div className="crm-pipe-mini">
+          <span>{formatMoney(contact.estimated_amount || 0)}</span>
+          <span>{Number(contact.probability_percent || contact.probability || 0)} %</span>
+          <strong>{formatMoney(weightedPipe(contact))}</strong>
+        </div>
+        <small>{contact.product_family || "Famille non renseignée"} · {priorityLabel(contact.priority)}</small>
 
         <div className="crm-card-actions">
+          <button className="btn small" onClick={(e) => { e.stopPropagation(); openPhone(contact); }}>
+            Appeler
+          </button>
+          <button className="btn small" onClick={(e) => { e.stopPropagation(); openEmail(contact); quickLogEmail(contact); }}>
+            Email
+          </button>
           <button className="btn small" onClick={(e) => { e.stopPropagation(); editContact(contact); }}>
             Modifier
           </button>
@@ -811,6 +1009,31 @@ export default function CRM({ user, permissions }) {
       </div>
 
       {message && <div className="alert info">{message}</div>}
+
+      {activeCall && (
+        <div className="card crm-call-banner">
+          <div>
+            <span>Appel en cours / à enregistrer</span>
+            <strong>{activeCall.contact.company_name}</strong>
+            <small>{activeCall.phone} · lancé à {new Date(activeCall.startedAt).toLocaleTimeString("fr-FR")}</small>
+          </div>
+
+          <div className="inline-actions">
+            <button className="btn primary" onClick={() => saveCallInteraction("answered")}>
+              Appel réussi
+            </button>
+            <button className="btn small" onClick={() => saveCallInteraction("voicemail")}>
+              Messagerie
+            </button>
+            <button className="btn small" onClick={() => saveCallInteraction("no_answer")}>
+              Pas de réponse
+            </button>
+            <button className="btn small danger-soft" onClick={() => setActiveCall(null)}>
+              Annuler
+            </button>
+          </div>
+        </div>
+      )}
 
       <div className="crm-alerts-grid crm-alerts-grid-extended">
         <div className="card crm-alert-card overdue">
@@ -920,6 +1143,80 @@ export default function CRM({ user, permissions }) {
               <option value="">Non affecté</option>
               {employees.map((employee) => (
                 <option key={employee.id} value={employee.id}>{employee.name}</option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label>Montant estimé HT</label>
+            <input type="number" value={contactForm.estimated_amount} onChange={(e) => setContactForm({ ...contactForm, estimated_amount: e.target.value })} />
+          </div>
+
+          <div>
+            <label>Probabilité %</label>
+            <input type="number" min="0" max="100" value={contactForm.probability_percent} onChange={(e) => setContactForm({ ...contactForm, probability_percent: e.target.value })} />
+          </div>
+
+          <div>
+            <label>Mois signature prévu</label>
+            <input type="month" value={contactForm.expected_signature_month} onChange={(e) => setContactForm({ ...contactForm, expected_signature_month: e.target.value })} />
+          </div>
+
+          <div>
+            <label>Marge estimée %</label>
+            <input type="number" value={contactForm.margin_percent} onChange={(e) => setContactForm({ ...contactForm, margin_percent: e.target.value })} />
+          </div>
+
+          <div>
+            <label>Famille produit</label>
+            <input value={contactForm.product_family} onChange={(e) => setContactForm({ ...contactForm, product_family: e.target.value })} placeholder="Lettrage, banc, maritime..." />
+          </div>
+
+          <div>
+            <label>Secteur</label>
+            <input value={contactForm.sector} onChange={(e) => setContactForm({ ...contactForm, sector: e.target.value })} placeholder="Collectivité, industrie..." />
+          </div>
+
+          <div>
+            <label>Source lead</label>
+            <input value={contactForm.lead_source} onChange={(e) => setContactForm({ ...contactForm, lead_source: e.target.value })} />
+          </div>
+
+          <div>
+            <label>Concurrent</label>
+            <input value={contactForm.competitor} onChange={(e) => setContactForm({ ...contactForm, competitor: e.target.value })} />
+          </div>
+
+          <div>
+            <label>Priorité</label>
+            <select value={contactForm.priority} onChange={(e) => setContactForm({ ...contactForm, priority: e.target.value })}>
+              <option value="low">Basse</option>
+              <option value="normal">Normale</option>
+              <option value="high">Haute</option>
+              <option value="critical">Critique</option>
+            </select>
+          </div>
+
+          <div>
+            <label>Projet lié</label>
+            <select value={contactForm.project_id} onChange={(e) => setContactForm({ ...contactForm, project_id: e.target.value })}>
+              <option value="">Aucun</option>
+              {projects.map((project) => (
+                <option key={project.id} value={project.id}>
+                  {project.project_code ? `${project.project_code} - ` : ""}{project.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label>Chiffrage lié</label>
+            <select value={contactForm.quote_id} onChange={(e) => setContactForm({ ...contactForm, quote_id: e.target.value })}>
+              <option value="">Aucun</option>
+              {quotes.map((quote) => (
+                <option key={quote.id} value={quote.id}>
+                  {quote.title || quote.name || quote.reference || "Chiffrage"}
+                </option>
               ))}
             </select>
           </div>
@@ -1037,6 +1334,27 @@ export default function CRM({ user, permissions }) {
             <button className="btn small" onClick={() => setSelectedContact(null)}>Fermer</button>
           </div>
 
+          <div className="crm-opportunity-summary">
+            <div><span>Montant estimé</span><strong>{formatMoney(selectedContact.estimated_amount || 0)}</strong></div>
+            <div><span>Probabilité</span><strong>{Number(selectedContact.probability_percent || selectedContact.probability || 0)} %</strong></div>
+            <div><span>Pipe pondéré</span><strong>{formatMoney(weightedPipe(selectedContact))}</strong></div>
+            <div><span>Signature prévue</span><strong>{selectedContact.expected_signature_month || "-"}</strong></div>
+            <div><span>Famille</span><strong>{selectedContact.product_family || "-"}</strong></div>
+            <div><span>Secteur</span><strong>{selectedContact.sector || "-"}</strong></div>
+          </div>
+
+          <div className="crm-contact-actions">
+            <button className="btn primary" onClick={() => openPhone(selectedContact)}>
+              Appeler
+            </button>
+            <button className="btn small" onClick={() => { openEmail(selectedContact); quickLogEmail(selectedContact); }}>
+              Email
+            </button>
+            <button className="btn small" onClick={() => openMaps(selectedContact)}>
+              Itinéraire
+            </button>
+          </div>
+
           <div className="crm-linked-grid">
             <div>
               <strong>Projets liés</strong>
@@ -1119,6 +1437,9 @@ export default function CRM({ user, permissions }) {
                   {interaction.meeting_location ? ` · ${interaction.meeting_location}` : ""}
                   {interaction.done ? " · traité" : ""}
                 </small>
+                {interaction.call_duration_seconds ? (
+                  <small>Durée appel : {Math.floor(interaction.call_duration_seconds / 60)} min {interaction.call_duration_seconds % 60} s · statut : {interaction.call_status || "-"}</small>
+                ) : null}
                 {interaction.notes && <p>{interaction.notes}</p>}
               </div>
             ))}

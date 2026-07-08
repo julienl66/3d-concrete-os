@@ -4,30 +4,17 @@ import { canAccess } from "../services/permissions.js";
 import { emitEvent } from "../services/events.js";
 
 const FILTERS = [
-  { value: "all", label: "Toutes" },
-  { value: "crm", label: "CRM" },
+  { value: "action", label: "À traiter" },
+  { value: "today", label: "Aujourd'hui" },
+  { value: "crm", label: "CRM utile" },
   { value: "project", label: "Projets" },
   { value: "planning", label: "Planning" },
-  { value: "stock", label: "Stock" },
-  { value: "workflow", label: "Workflow" },
-  { value: "pointage", label: "Pointage" },
+  { value: "all", label: "Historique" },
 ];
 
-function iconForEvent(event) {
-  const type = String(event.event_type || "").toLowerCase();
-  const entity = String(event.entity_type || "").toLowerCase();
-
-  if (type.includes("crm") || entity.includes("crm")) return "🤝";
-  if (type.includes("project") || entity.includes("project")) return "📁";
-  if (type.includes("planning") || entity.includes("planning")) return "📅";
-  if (type.includes("task")) return "✅";
-  if (type.includes("stock")) return "📦";
-  if (type.includes("clock") || type.includes("pointage")) return "⏱️";
-  if (type.includes("document")) return "📄";
-  if (type.includes("quote") || type.includes("devis")) return "🧾";
-
-  return "⚡";
-}
+const HIDDEN_DEFAULT_EVENTS = [
+  "CRM_CONTACT_CREATED",
+];
 
 function categoryForEvent(event) {
   const type = String(event.event_type || "").toLowerCase();
@@ -40,19 +27,49 @@ function categoryForEvent(event) {
   if (type.includes("workflow") || entity.includes("workflow")) return "workflow";
   if (type.includes("clock") || type.includes("pointage") || entity.includes("pointage")) return "pointage";
 
-  return "all";
+  return "other";
+}
+
+function iconForEvent(event) {
+  const type = String(event.event_type || "").toLowerCase();
+  const category = categoryForEvent(event);
+
+  if (type.includes("request")) return "📝";
+  if (type.includes("updated")) return "✏️";
+  if (type.includes("completed") || type.includes("done")) return "✅";
+  if (type.includes("created")) return "➕";
+  if (category === "crm") return "🤝";
+  if (category === "project") return "📁";
+  if (category === "planning") return "📅";
+  if (category === "stock") return "📦";
+  if (category === "workflow") return "🔄";
+
+  return "⚡";
+}
+
+function importanceForEvent(event) {
+  const type = String(event.event_type || "").toUpperCase();
+  const payload = event.payload || {};
+
+  if (type.includes("STOCK_LOW") || type.includes("OVERDUE") || payload.priority === "urgent") return "urgent";
+  if (type.includes("REQUEST") || type.includes("TASK_CREATED") || type.includes("PLANNING_TASK_CREATED")) return "action";
+  if (type.includes("CREATED") || type.includes("UPDATED")) return "info";
+
+  return "history";
 }
 
 export default function ActivityCenter({ user, permissions }) {
   const [events, setEvents] = useState([]);
   const [employees, setEmployees] = useState([]);
   const [message, setMessage] = useState("");
-  const [filter, setFilter] = useState("all");
+  const [filter, setFilter] = useState("action");
   const [search, setSearch] = useState("");
+  const [showNoise, setShowNoise] = useState(false);
   const [manualForm, setManualForm] = useState({
     title: "",
     description: "",
     entity_type: "manual",
+    importance: "action",
   });
 
   useEffect(() => {
@@ -72,7 +89,7 @@ export default function ActivityCenter({ user, permissions }) {
         .from("erp_events")
         .select("*")
         .order("created_at", { ascending: false })
-        .limit(250),
+        .limit(300),
       supabase
         .from("employees")
         .select("id, name")
@@ -106,13 +123,46 @@ export default function ActivityCenter({ user, permissions }) {
     });
   }
 
+  const cleanEvents = useMemo(() => {
+    return events.filter((event) => {
+      if (showNoise) return true;
+      return !HIDDEN_DEFAULT_EVENTS.includes(event.event_type);
+    });
+  }, [events, showNoise]);
+
+  const actionEvents = cleanEvents.filter((event) =>
+    ["urgent", "action"].includes(importanceForEvent(event))
+  );
+
+  const todayEvents = cleanEvents.filter((event) =>
+    String(event.created_at || "").slice(0, 10) === new Date().toISOString().slice(0, 10)
+  );
+
+  const projectEvents = cleanEvents.filter((event) => categoryForEvent(event) === "project");
+  const planningEvents = cleanEvents.filter((event) => categoryForEvent(event) === "planning");
+  const crmUsefulEvents = cleanEvents.filter((event) =>
+    categoryForEvent(event) === "crm" && event.event_type !== "CRM_CONTACT_CREATED"
+  );
+
+  const urgentCount = cleanEvents.filter((event) => importanceForEvent(event) === "urgent").length;
+  const actionCount = actionEvents.length;
+  const todayCount = todayEvents.length;
+
   const filteredEvents = useMemo(() => {
     const query = search.toLowerCase().trim();
 
-    return events.filter((event) => {
+    return cleanEvents.filter((event) => {
       const eventCategory = categoryForEvent(event);
+      const eventImportance = importanceForEvent(event);
 
-      const matchesFilter = filter === "all" || eventCategory === filter;
+      let matchesFilter = true;
+
+      if (filter === "action") matchesFilter = ["urgent", "action"].includes(eventImportance);
+      if (filter === "today") matchesFilter = String(event.created_at || "").slice(0, 10) === new Date().toISOString().slice(0, 10);
+      if (filter === "crm") matchesFilter = eventCategory === "crm" && event.event_type !== "CRM_CONTACT_CREATED";
+      if (filter === "project") matchesFilter = eventCategory === "project";
+      if (filter === "planning") matchesFilter = eventCategory === "planning";
+      if (filter === "all") matchesFilter = true;
 
       const payloadText = event.payload ? JSON.stringify(event.payload).toLowerCase() : "";
       const matchesSearch =
@@ -130,16 +180,7 @@ export default function ActivityCenter({ user, permissions }) {
 
       return matchesFilter && matchesSearch;
     });
-  }, [events, employees, filter, search]);
-
-  const todayCount = events.filter((event) => {
-    if (!event.created_at) return false;
-    return String(event.created_at).slice(0, 10) === new Date().toISOString().slice(0, 10);
-  }).length;
-
-  const crmCount = events.filter((event) => categoryForEvent(event) === "crm").length;
-  const planningCount = events.filter((event) => categoryForEvent(event) === "planning").length;
-  const projectCount = events.filter((event) => categoryForEvent(event) === "project").length;
+  }, [cleanEvents, employees, filter, search]);
 
   async function createManualEvent(e) {
     e.preventDefault();
@@ -155,11 +196,11 @@ export default function ActivityCenter({ user, permissions }) {
     }
 
     const { error } = await emitEvent({
-      event_type: "MANUAL_ACTIVITY",
+      event_type: manualForm.importance === "action" ? "MANUAL_ACTION" : "MANUAL_ACTIVITY",
       entity_type: manualForm.entity_type || "manual",
       title: manualForm.title,
       description: manualForm.description || null,
-      payload: {},
+      payload: { importance: manualForm.importance },
       user,
     });
 
@@ -172,19 +213,52 @@ export default function ActivityCenter({ user, permissions }) {
       title: "",
       description: "",
       entity_type: "manual",
+      importance: "action",
     });
 
     setMessage("Activité ajoutée.");
     await loadActivityCenter();
   }
 
+  async function archiveEvent(event) {
+    if (!can("can_archive") && !can("can_edit")) {
+      setMessage("Action non autorisée.");
+      return;
+    }
+
+    const { error } = await supabase
+      .from("erp_events")
+      .update({
+        event_type: `${event.event_type}_ARCHIVED`,
+        payload: {
+          ...(event.payload || {}),
+          archived: true,
+          archived_at: new Date().toISOString(),
+          archived_by: user?.id || null,
+        },
+      })
+      .eq("id", event.id);
+
+    if (error) {
+      setMessage(error.message);
+      return;
+    }
+
+    setEvents((current) => current.filter((item) => item.id !== event.id));
+    setMessage("Activité masquée.");
+  }
+
+  function eventClass(event) {
+    return `activity-item ${importanceForEvent(event)}`;
+  }
+
   return (
     <section className="page">
       <div className="page-head">
         <div>
-          <p className="eyebrow">Event Engine</p>
+          <p className="eyebrow">Centre de commandement</p>
           <h2>Activity Center</h2>
-          <p>Flux central des événements ERP : CRM, projets, planning, tâches, stock et workflows.</p>
+          <p>Actions utiles et événements réellement exploitables. Les simples imports CRM sont masqués par défaut.</p>
         </div>
 
         <button className="btn secondary" onClick={loadActivityCenter}>
@@ -194,23 +268,35 @@ export default function ActivityCenter({ user, permissions }) {
 
       {message && <div className="alert info">{message}</div>}
 
-      <div className="activity-hero">
-        <div>
-          <span>Activités aujourd'hui</span>
-          <strong>{todayCount}</strong>
-          <p>Événements automatiquement enregistrés par l'ERP.</p>
+      <div className="activity-command-grid">
+        <div className="activity-command-card urgent">
+          <span>Urgent</span>
+          <strong>{urgentCount}</strong>
+          <p>À traiter immédiatement.</p>
         </div>
 
-        <div className="activity-hero-stats">
-          <div><span>CRM</span><strong>{crmCount}</strong></div>
-          <div><span>Projets</span><strong>{projectCount}</strong></div>
-          <div><span>Planning</span><strong>{planningCount}</strong></div>
+        <div className="activity-command-card action">
+          <span>À traiter</span>
+          <strong>{actionCount}</strong>
+          <p>Demandes, tâches, planning.</p>
+        </div>
+
+        <div className="activity-command-card today">
+          <span>Aujourd'hui</span>
+          <strong>{todayCount}</strong>
+          <p>Activité du jour.</p>
+        </div>
+
+        <div className="activity-command-card">
+          <span>Projets</span>
+          <strong>{projectEvents.length}</strong>
+          <p>Créations et demandes.</p>
         </div>
       </div>
 
       {can("can_create") && (
         <div className="card">
-          <h3>Ajouter une activité manuelle</h3>
+          <h3>Ajouter une action manuelle</h3>
 
           <form className="activity-manual-form" onSubmit={createManualEvent}>
             <div>
@@ -218,12 +304,12 @@ export default function ActivityCenter({ user, permissions }) {
               <input
                 value={manualForm.title}
                 onChange={(e) => setManualForm({ ...manualForm, title: e.target.value })}
-                placeholder="Ex : Point client, décision interne..."
+                placeholder="Ex : Relancer mairie, valider BAT..."
               />
             </div>
 
             <div>
-              <label>Catégorie</label>
+              <label>Type</label>
               <select
                 value={manualForm.entity_type}
                 onChange={(e) => setManualForm({ ...manualForm, entity_type: e.target.value })}
@@ -234,6 +320,17 @@ export default function ActivityCenter({ user, permissions }) {
                 <option value="planning">Planning</option>
                 <option value="stock">Stock</option>
                 <option value="workflow">Workflow</option>
+              </select>
+            </div>
+
+            <div>
+              <label>Importance</label>
+              <select
+                value={manualForm.importance}
+                onChange={(e) => setManualForm({ ...manualForm, importance: e.target.value })}
+              >
+                <option value="action">À traiter</option>
+                <option value="info">Information</option>
               </select>
             </div>
 
@@ -253,36 +350,47 @@ export default function ActivityCenter({ user, permissions }) {
       <div className="card">
         <div className="page-head">
           <div>
-            <h3>Flux d'activité</h3>
-            <p>Recherche globale dans les événements et activités.</p>
+            <h3>Flux utile</h3>
+            <p>Par défaut, seuls les événements utiles sont affichés.</p>
           </div>
 
           <input
             className="activity-search"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Rechercher : Duclair, devis, stock..."
+            placeholder="Rechercher : Duclair, devis, planning..."
           />
         </div>
 
-        <div className="planning-filters">
-          {FILTERS.map((item) => (
-            <button
-              key={item.value}
-              className={filter === item.value ? "active" : ""}
-              onClick={() => setFilter(item.value)}
-            >
-              {item.label}
-            </button>
-          ))}
+        <div className="activity-toolbar">
+          <div className="planning-filters">
+            {FILTERS.map((item) => (
+              <button
+                key={item.value}
+                className={filter === item.value ? "active" : ""}
+                onClick={() => setFilter(item.value)}
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
+
+          <label className="activity-noise-toggle">
+            <input
+              type="checkbox"
+              checked={showNoise}
+              onChange={(e) => setShowNoise(e.target.checked)}
+            />
+            Afficher les événements de masse
+          </label>
         </div>
 
         <div className="activity-timeline">
           {filteredEvents.length === 0 ? (
-            <p>Aucune activité.</p>
+            <p>Aucune activité utile dans ce filtre.</p>
           ) : (
             filteredEvents.map((event) => (
-              <article className="activity-item" key={event.id}>
+              <article className={eventClass(event)} key={event.id}>
                 <div className="activity-icon">{iconForEvent(event)}</div>
 
                 <div>
@@ -300,10 +408,16 @@ export default function ActivityCenter({ user, permissions }) {
 
                   {event.payload && Object.keys(event.payload || {}).length > 0 && (
                     <details>
-                      <summary>Détails techniques</summary>
+                      <summary>Détails</summary>
                       <pre>{JSON.stringify(event.payload, null, 2)}</pre>
                     </details>
                   )}
+                </div>
+
+                <div className="activity-actions">
+                  <button className="btn small" onClick={() => archiveEvent(event)}>
+                    Masquer
+                  </button>
                 </div>
               </article>
             ))

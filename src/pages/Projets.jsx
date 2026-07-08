@@ -1,9 +1,12 @@
 import { useEffect, useState } from "react";
 import { supabase } from "../services/supabase.js";
+import { emitEvent } from "../services/events.js";
 
 export default function Projets({ user, permissions }) {
   const [projects, setProjects] = useState([]);
   const [requests, setRequests] = useState([]);
+  const [crmContacts, setCrmContacts] = useState([]);
+  const [clientSearch, setClientSearch] = useState("");
   const [workflowTemplates, setWorkflowTemplates] = useState([]);
   const [workflowSteps, setWorkflowSteps] = useState([]);
   const [projectTypes, setProjectTypes] = useState([]);
@@ -37,6 +40,7 @@ export default function Projets({ user, permissions }) {
 
   const [form, setForm] = useState({
     client_name: "",
+    crm_contact_id: "",
     project_name: "",
     description: "",
     requested_delivery_date: "",
@@ -75,8 +79,19 @@ export default function Projets({ user, permissions }) {
       return;
     }
 
+    const { data: crmContactsData, error: crmContactsError } = await supabase
+      .from("crm_contacts")
+      .select("id, company_name, contact_name, city, email, phone")
+      .order("company_name");
+
+    if (crmContactsError) {
+      setMessage(crmContactsError.message);
+      return;
+    }
+
     setProjects(projectsData || []);
     setRequests(requestsData || []);
+    setCrmContacts(crmContactsData || []);
 
     const { data: workflowTemplatesData, error: workflowTemplatesError } = await supabase
       .from("project_workflow_templates")
@@ -227,6 +242,7 @@ export default function Projets({ user, permissions }) {
 
     const { error } = await supabase.from("project_requests").insert({
       commercial_id: user.id,
+      crm_contact_id: form.crm_contact_id || null,
       client_name: form.client_name,
       project_name: form.project_name,
       description: form.description,
@@ -242,10 +258,24 @@ export default function Projets({ user, permissions }) {
 
     setForm({
       client_name: "",
+      crm_contact_id: "",
       project_name: "",
       description: "",
       requested_delivery_date: "",
       requested_installation_date: "",
+    });
+
+    await emitEvent({
+      event_type: "PROJECT_REQUEST_CREATED",
+      entity_type: "project_request",
+      title: `Nouvelle demande projet : ${form.project_name}`,
+      description: form.client_name,
+      payload: {
+        client_name: form.client_name,
+        crm_contact_id: form.crm_contact_id || null,
+        project_name: form.project_name,
+      },
+      user,
     });
 
     setMessage("Demande projet envoyée.");
@@ -1253,6 +1283,17 @@ export default function Projets({ user, permissions }) {
     return matchesSearch && matchesCategory;
   });
 
+  const filteredCrmContactsForRequest = crmContacts.filter((contact) => {
+    const query = clientSearch.toLowerCase().trim();
+    if (!query) return false;
+
+    return [contact.company_name, contact.contact_name, contact.city, contact.email, contact.phone]
+      .filter(Boolean)
+      .some((value) => String(value).toLowerCase().includes(query));
+  }).slice(0, 8);
+
+  const selectedCrmContact = crmContacts.find((contact) => contact.id === form.crm_contact_id);
+
   const projectHours = calculateProjectHours(projectEvents);
   const estimatedHours = Number(selectedProject?.estimated_hours || 0);
   const hourGap = projectHours - estimatedHours;
@@ -1302,13 +1343,45 @@ export default function Projets({ user, permissions }) {
             <h3>Nouvelle demande projet</h3>
 
             <form onSubmit={submitRequest} className="grid">
-              <div>
-                <label>Client</label>
+              <div className="project-client-search">
+                <label>Client CRM ou saisie libre</label>
                 <input
                   value={form.client_name}
-                  onChange={(e) => setForm({ ...form, client_name: e.target.value })}
-                  placeholder="Ex : CMA 66"
+                  onChange={(e) => {
+                    setForm({ ...form, client_name: e.target.value, crm_contact_id: "" });
+                    setClientSearch(e.target.value);
+                  }}
+                  placeholder="Recherche client CRM ou nouveau client"
                 />
+
+                {selectedCrmContact && (
+                  <small className="project-selected-client">
+                    Client CRM lié : {selectedCrmContact.company_name}
+                    {selectedCrmContact.city ? ` · ${selectedCrmContact.city}` : ""}
+                  </small>
+                )}
+
+                {clientSearch && !form.crm_contact_id && filteredCrmContactsForRequest.length > 0 && (
+                  <div className="project-client-results">
+                    {filteredCrmContactsForRequest.map((contact) => (
+                      <button
+                        type="button"
+                        key={contact.id}
+                        onClick={() => {
+                          setForm({
+                            ...form,
+                            crm_contact_id: contact.id,
+                            client_name: contact.company_name,
+                          });
+                          setClientSearch("");
+                        }}
+                      >
+                        <strong>{contact.company_name}</strong>
+                        <small>{contact.contact_name || "-"} · {contact.city || "-"}</small>
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
 
               <div>

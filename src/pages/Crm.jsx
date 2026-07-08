@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../services/supabase.js";
 import { canAccess } from "../services/permissions.js";
+import { emitEvent } from "../services/events.js";
 
 const INTERACTION_TYPES = ["note", "appel", "email", "rdv", "devis", "relance"];
 
@@ -542,6 +543,23 @@ export default function CRM({ user, permissions }) {
       return;
     }
 
+    await emitEvent({
+      event_type: "CRM_OPPORTUNITY_UPDATED",
+      entity_type: "crm",
+      entity_id: selectedContact.id,
+      title: `Opportunité mise à jour : ${payload.company_name}`,
+      description: payload.notes || null,
+      payload: {
+        estimated_amount: payload.estimated_amount,
+        probability_percent: payload.probability_percent,
+        expected_signature_month: payload.expected_signature_month,
+        product_family: payload.product_family,
+        sector: payload.sector,
+        priority: payload.priority,
+      },
+      user,
+    });
+
     setSelectedContact(data);
     setMessage("Opportunité mise à jour.");
     await loadData();
@@ -586,7 +604,7 @@ export default function CRM({ user, permissions }) {
 
     const firstStage = stages[0];
 
-    const { error } = await supabase.from("crm_contacts").insert({
+    const { data: createdContact, error } = await supabase.from("crm_contacts").insert({
       company_name: contactForm.company_name,
       contact_name: contactForm.contact_name || null,
       email: contactForm.email || null,
@@ -609,12 +627,30 @@ export default function CRM({ user, permissions }) {
       stage_id: firstStage?.id || null,
       status: "active",
       created_by: user?.id || null,
-    });
+    })
+      .select()
+      .single();
 
     if (error) {
       setMessage(error.message);
       return;
     }
+
+    await emitEvent({
+      event_type: "CRM_OPPORTUNITY_CREATED",
+      entity_type: "crm",
+      entity_id: createdContact?.id || null,
+      title: `Nouvelle opportunité CRM : ${contactForm.company_name}`,
+      description: contactForm.city || null,
+      payload: {
+        company_name: contactForm.company_name,
+        contact_name: contactForm.contact_name || null,
+        estimated_amount: Number(contactForm.estimated_amount || 0),
+        probability_percent: Number(contactForm.probability_percent || 0),
+        expected_signature_month: contactForm.expected_signature_month || null,
+      },
+      user,
+    });
 
     setContactForm({
       company_name: "",
@@ -667,6 +703,25 @@ export default function CRM({ user, permissions }) {
       setMessage(error.message);
       return;
     }
+
+    const contact = contacts.find((item) => item.id === contactId);
+    const stage = stages.find((item) => item.id === stageId);
+
+    await emitEvent({
+      event_type: "CRM_STAGE_CHANGED",
+      entity_type: "crm",
+      entity_id: contactId,
+      title: `${contact?.company_name || "Opportunité"} déplacé en ${stage?.name || "Sans étape"}`,
+      description: contact?.contact_name || null,
+      payload: {
+        contact_id: contactId,
+        stage_id: stageId,
+        stage_name: stage?.name || null,
+        estimated_amount: contact?.estimated_amount || 0,
+        probability_percent: targetStage?.default_probability_percent ?? contact?.probability_percent ?? null,
+      },
+      user,
+    });
 
     await loadData();
   }
@@ -781,7 +836,7 @@ export default function CRM({ user, permissions }) {
       return;
     }
 
-    const { error } = await supabase.from("crm_interactions").insert({
+    const { data: createdInteraction, error } = await supabase.from("crm_interactions").insert({
       contact_id: selectedContact.id,
       interaction_type: interactionForm.interaction_type || "note",
       subject: interactionForm.subject || null,
@@ -792,12 +847,33 @@ export default function CRM({ user, permissions }) {
       meeting_location: interactionForm.meeting_location || null,
       priority: interactionForm.priority || "normal",
       created_by: user?.id || null,
-    });
+    })
+      .select()
+      .single();
 
     if (error) {
       setMessage(error.message);
       return;
     }
+
+    await emitEvent({
+      event_type: "CRM_INTERACTION_CREATED",
+      entity_type: "crm",
+      entity_id: selectedContact.id,
+      title: `${interactionForm.interaction_type || "activité"} CRM : ${interactionForm.subject || interactionForm.next_action || selectedContact.company_name}`,
+      description: interactionForm.notes || null,
+      payload: {
+        contact_id: selectedContact.id,
+        interaction_id: createdInteraction?.id || null,
+        interaction_type: interactionForm.interaction_type || "note",
+        next_action: interactionForm.next_action || null,
+        next_action_date: interactionForm.next_action_date || null,
+        meeting_time: interactionForm.meeting_time || null,
+        meeting_location: interactionForm.meeting_location || null,
+        priority: interactionForm.priority || "normal",
+      },
+      user,
+    });
 
     setInteractionForm({
       interaction_type: "note",
@@ -995,6 +1071,23 @@ export default function CRM({ user, permissions }) {
       return;
     }
 
+    await emitEvent({
+      event_type: "CRM_CALL_LOGGED",
+      entity_type: "crm",
+      entity_id: activeCall.contact.id,
+      title: `Appel CRM : ${activeCall.contact.company_name}`,
+      description: notes || null,
+      payload: {
+        contact_id: activeCall.contact.id,
+        phone: activeCall.phone,
+        call_status: status,
+        duration_seconds: durationSeconds,
+        next_action: nextAction || null,
+        next_action_date: nextDate || null,
+      },
+      user,
+    });
+
     setActiveCall(null);
     setMessage("Appel enregistré dans le CRM.");
     await loadData();
@@ -1025,6 +1118,20 @@ export default function CRM({ user, permissions }) {
       setMessage(error.message);
       return;
     }
+
+    await emitEvent({
+      event_type: "CRM_EMAIL_LOGGED",
+      entity_type: "crm",
+      entity_id: contact.id,
+      title: `Email CRM : ${contact.company_name}`,
+      description: subject || null,
+      payload: {
+        contact_id: contact.id,
+        next_action: nextAction || null,
+        next_action_date: nextDate || null,
+      },
+      user,
+    });
 
     setMessage("Email enregistré dans le CRM.");
     await loadData();

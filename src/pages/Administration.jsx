@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { supabase } from "../services/supabase.js";
+import CommercialSettings from "../components/CommercialSettings.jsx";
 
 export default function Administration({ user }) {
   const [activities, setActivities] = useState([]);
@@ -768,6 +769,8 @@ export default function Administration({ user }) {
           </div>
         )}
       </div>
+
+      <CommercialSettings user={user} setMessage={setMessage} />
 
       <div className="admin-grid">
         <div className="card">

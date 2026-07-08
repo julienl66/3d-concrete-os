@@ -7824,5 +7824,69 @@ textarea:focus {
   margin-top: 3px;
   font-size: 13px;
 }
+.commercial-settings {
+  display: grid;
+  gap: 18px;
+  margin-bottom: 18px;
+}
+
+.commercial-stage-list {
+  display: grid;
+  gap: 10px;
+}
+
+.commercial-stage-row {
+  display: grid;
+  grid-template-columns: 1.4fr 160px 180px 160px;
+  gap: 10px;
+  align-items: end;
+  border-radius: 18px;
+  padding: 12px;
+  background: #f8fafc;
+  border: 1px solid #e5e7eb;
+}
+
+.commercial-stage-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.commercial-stage-title span {
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+}
+
+.commercial-stage-row label,
+.commercial-switch label {
+  display: block;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 900;
+  margin-bottom: 4px;
+}
+
+.commercial-settings-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 18px;
+}
+
+.commercial-objective-form {
+  display: grid;
+  grid-template-columns: 1fr 140px 180px 1fr auto;
+  gap: 10px;
+  align-items: end;
+  margin-bottom: 18px;
+}
+
+@media (max-width: 1200px) {
+  .commercial-stage-row,
+  .commercial-settings-grid,
+  .commercial-objective-form {
+    grid-template-columns: 1fr;
+  }
+}
 
 

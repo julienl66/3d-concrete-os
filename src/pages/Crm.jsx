@@ -648,9 +648,19 @@ export default function CRM({ user, permissions }) {
       return;
     }
 
+    const targetStage = stages.find((stage) => stage.id === stageId);
+
+    const patch = {
+      stage_id: stageId,
+    };
+
+    if (targetStage?.default_probability_percent !== undefined && targetStage?.default_probability_percent !== null) {
+      patch.probability_percent = Number(targetStage.default_probability_percent);
+    }
+
     const { error } = await supabase
       .from("crm_contacts")
-      .update({ stage_id: stageId })
+      .update(patch)
       .eq("id", contactId);
 
     if (error) {

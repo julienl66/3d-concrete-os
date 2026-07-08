@@ -12,6 +12,7 @@ export default function CRM({ user, permissions }) {
   const [projects, setProjects] = useState([]);
   const [quotes, setQuotes] = useState([]);
   const [selectedContact, setSelectedContact] = useState(null);
+  const [opportunityForm, setOpportunityForm] = useState(null);
   const [draggedContactId, setDraggedContactId] = useState(null);
   const [message, setMessage] = useState("");
   const [viewMode, setViewMode] = useState("board");
@@ -59,6 +60,36 @@ export default function CRM({ user, permissions }) {
   useEffect(() => {
     loadData();
   }, []);
+
+  useEffect(() => {
+    if (!selectedContact) {
+      setOpportunityForm(null);
+      return;
+    }
+
+    setOpportunityForm({
+      company_name: selectedContact.company_name || "",
+      contact_name: selectedContact.contact_name || "",
+      email: selectedContact.email || "",
+      phone: selectedContact.phone || "",
+      city: selectedContact.city || "",
+      contact_type: selectedContact.contact_type || "prospect",
+      assigned_to: selectedContact.assigned_to || "",
+      stage_id: selectedContact.stage_id || "",
+      estimated_amount: selectedContact.estimated_amount || "",
+      margin_percent: selectedContact.margin_percent || "",
+      probability_percent: selectedContact.probability_percent || selectedContact.probability || "",
+      expected_signature_month: selectedContact.expected_signature_month || "",
+      product_family: selectedContact.product_family || "",
+      sector: selectedContact.sector || "",
+      lead_source: selectedContact.lead_source || "",
+      competitor: selectedContact.competitor || "",
+      priority: selectedContact.priority || "normal",
+      project_id: selectedContact.project_id || "",
+      quote_id: selectedContact.quote_id || "",
+      notes: selectedContact.notes || "",
+    });
+  }, [selectedContact]);
 
   async function loadData() {
     const [
@@ -464,6 +495,80 @@ export default function CRM({ user, permissions }) {
 
     setMessage(`${contactsToInsert.length} contact(s) importé(s).`);
     await loadData();
+  }
+
+  async function saveOpportunity(e) {
+    e.preventDefault();
+
+    if (!selectedContact || !opportunityForm) return;
+
+    if (!can("can_edit")) {
+      setMessage("Action non autorisée.");
+      return;
+    }
+
+    const payload = {
+      company_name: opportunityForm.company_name || "Sans nom",
+      contact_name: opportunityForm.contact_name || null,
+      email: opportunityForm.email || null,
+      phone: opportunityForm.phone || null,
+      city: opportunityForm.city || null,
+      contact_type: opportunityForm.contact_type || "prospect",
+      assigned_to: opportunityForm.assigned_to || null,
+      stage_id: opportunityForm.stage_id || null,
+      estimated_amount: Number(opportunityForm.estimated_amount || 0),
+      margin_percent: opportunityForm.margin_percent ? Number(opportunityForm.margin_percent) : null,
+      probability_percent: opportunityForm.probability_percent ? Number(opportunityForm.probability_percent) : null,
+      expected_signature_month: opportunityForm.expected_signature_month || null,
+      product_family: opportunityForm.product_family || null,
+      sector: opportunityForm.sector || null,
+      lead_source: opportunityForm.lead_source || null,
+      competitor: opportunityForm.competitor || null,
+      priority: opportunityForm.priority || "normal",
+      project_id: opportunityForm.project_id || null,
+      quote_id: opportunityForm.quote_id || null,
+      notes: opportunityForm.notes || null,
+    };
+
+    const { data, error } = await supabase
+      .from("crm_contacts")
+      .update(payload)
+      .eq("id", selectedContact.id)
+      .select()
+      .single();
+
+    if (error) {
+      setMessage(error.message);
+      return;
+    }
+
+    setSelectedContact(data);
+    setMessage("Opportunité mise à jour.");
+    await loadData();
+  }
+
+  function updateOpportunityForm(key, value) {
+    setOpportunityForm((current) => ({
+      ...(current || {}),
+      [key]: value,
+    }));
+  }
+
+  function opportunityScore(contact) {
+    if (!contact) return 0;
+
+    let score = 0;
+
+    if (Number(contact.estimated_amount || 0) > 0) score += 15;
+    if (Number(contact.probability_percent || contact.probability || 0) >= 50) score += 15;
+    if (contact.expected_signature_month) score += 10;
+    if (contact.assigned_to) score += 10;
+    if (contact.product_family) score += 10;
+    if (contact.sector) score += 10;
+    if ((contactInteractions(contact.id) || []).some((item) => item.interaction_type === "rdv")) score += 15;
+    if ((contactInteractions(contact.id) || []).some((item) => item.interaction_type === "devis")) score += 15;
+
+    return Math.min(100, score);
   }
 
   async function createContact(e) {
@@ -1324,128 +1429,277 @@ export default function CRM({ user, permissions }) {
         </div>
       )}
 
-      {selectedContact && (
-        <div className="card">
-          <div className="page-head">
-            <div>
-              <h3>{selectedContact.company_name}</h3>
-              <p>{selectedContact.contact_name || "-"} · {selectedContact.email || "-"} · {selectedContact.phone || "-"}</p>
-            </div>
-            <button className="btn small" onClick={() => setSelectedContact(null)}>Fermer</button>
-          </div>
-
-          <div className="crm-opportunity-summary">
-            <div><span>Montant estimé</span><strong>{formatMoney(selectedContact.estimated_amount || 0)}</strong></div>
-            <div><span>Probabilité</span><strong>{Number(selectedContact.probability_percent || selectedContact.probability || 0)} %</strong></div>
-            <div><span>Pipe pondéré</span><strong>{formatMoney(weightedPipe(selectedContact))}</strong></div>
-            <div><span>Signature prévue</span><strong>{selectedContact.expected_signature_month || "-"}</strong></div>
-            <div><span>Famille</span><strong>{selectedContact.product_family || "-"}</strong></div>
-            <div><span>Secteur</span><strong>{selectedContact.sector || "-"}</strong></div>
-          </div>
-
-          <div className="crm-contact-actions">
-            <button className="btn primary" onClick={() => openPhone(selectedContact)}>
-              Appeler
-            </button>
-            <button className="btn small" onClick={() => { openEmail(selectedContact); quickLogEmail(selectedContact); }}>
-              Email
-            </button>
-            <button className="btn small" onClick={() => openMaps(selectedContact)}>
-              Itinéraire
-            </button>
-          </div>
-
-          <div className="crm-linked-grid">
-            <div>
-              <strong>Projets liés</strong>
-              {contactProjects(selectedContact.id).length === 0 ? (
-                <p>Aucun projet lié.</p>
-              ) : (
-                contactProjects(selectedContact.id).map((project) => (
-                  <small key={project.id}>{project.project_code || ""} {project.name}</small>
-                ))
-              )}
-            </div>
-
-            <div>
-              <strong>Chiffrages liés</strong>
-              {contactQuotes(selectedContact.id).length === 0 ? (
-                <p>Aucun chiffrage lié.</p>
-              ) : (
-                contactQuotes(selectedContact.id).map((quote) => (
-                  <small key={quote.id}>{quote.project_name}</small>
-                ))
-              )}
-            </div>
-          </div>
-
-          <form className="crm-interaction-form crm-interaction-form-extended" onSubmit={createInteraction}>
-            <div>
-              <label>Type</label>
-              <select value={interactionForm.interaction_type} onChange={(e) => setInteractionForm({ ...interactionForm, interaction_type: e.target.value })}>
-                {INTERACTION_TYPES.map((type) => (
-                  <option key={type} value={type}>{type}</option>
-                ))}
-              </select>
-            </div>
-
-            <div>
-              <label>Sujet</label>
-              <input value={interactionForm.subject} onChange={(e) => setInteractionForm({ ...interactionForm, subject: e.target.value })} />
-            </div>
-
-            <div>
-              <label>Action suivante</label>
-              <input value={interactionForm.next_action} onChange={(e) => setInteractionForm({ ...interactionForm, next_action: e.target.value })} />
-            </div>
-
-            <div>
-              <label>Date relance / RDV</label>
-              <input type="date" value={interactionForm.next_action_date} onChange={(e) => setInteractionForm({ ...interactionForm, next_action_date: e.target.value })} />
-            </div>
-
-            <div>
-              <label>Heure RDV</label>
-              <input type="time" value={interactionForm.meeting_time} onChange={(e) => setInteractionForm({ ...interactionForm, meeting_time: e.target.value })} />
-            </div>
-
-            <div>
-              <label>Lieu RDV</label>
-              <input value={interactionForm.meeting_location} onChange={(e) => setInteractionForm({ ...interactionForm, meeting_location: e.target.value })} />
-            </div>
-
-            <div>
-              <label>Priorité</label>
-              <select value={interactionForm.priority} onChange={(e) => setInteractionForm({ ...interactionForm, priority: e.target.value })}>
-                <option value="low">Basse</option>
-                <option value="normal">Normale</option>
-                <option value="high">Haute</option>
-              </select>
-            </div>
-
-            <button className="btn primary">Ajouter interaction</button>
-          </form>
-
-          <div className="crm-history">
-            {contactInteractions(selectedContact.id).map((interaction) => (
-              <div key={interaction.id}>
-                <strong>{interaction.interaction_type} · {interaction.subject || "-"}</strong>
-                <small>
-                  {interaction.next_action ? `Action : ${interaction.next_action}` : ""}
-                  {interaction.next_action_date ? ` · ${interaction.next_action_date}` : ""}
-                  {interaction.meeting_time ? ` · ${interaction.meeting_time}` : ""}
-                  {interaction.meeting_location ? ` · ${interaction.meeting_location}` : ""}
-                  {interaction.done ? " · traité" : ""}
-                </small>
-                {interaction.call_duration_seconds ? (
-                  <small>Durée appel : {Math.floor(interaction.call_duration_seconds / 60)} min {interaction.call_duration_seconds % 60} s · statut : {interaction.call_status || "-"}</small>
-                ) : null}
-                {interaction.notes && <p>{interaction.notes}</p>}
+      {selectedContact && opportunityForm && (
+        <div className="crm-drawer-backdrop" onClick={() => setSelectedContact(null)}>
+          <aside className="crm-drawer" onClick={(e) => e.stopPropagation()}>
+            <div className="crm-drawer-head">
+              <div>
+                <p className="eyebrow">Fiche opportunité</p>
+                <h3>{selectedContact.company_name}</h3>
+                <p>{selectedContact.contact_name || "-"} · {selectedContact.email || "-"} · {selectedContact.phone || "-"}</p>
               </div>
-            ))}
-          </div>
+
+              <button className="btn small" onClick={() => setSelectedContact(null)}>Fermer</button>
+            </div>
+
+            <div className="crm-drawer-score">
+              <div>
+                <span>Score opportunité</span>
+                <strong>{opportunityScore(selectedContact)} / 100</strong>
+                <small>
+                  {opportunityScore(selectedContact) >= 80 && "Opportunité chaude"}
+                  {opportunityScore(selectedContact) >= 50 && opportunityScore(selectedContact) < 80 && "Opportunité à structurer"}
+                  {opportunityScore(selectedContact) < 50 && "Dossier à qualifier"}
+                </small>
+              </div>
+
+              <div className="crm-drawer-score-bar">
+                <b style={{ width: `${opportunityScore(selectedContact)}%` }} />
+              </div>
+            </div>
+
+            <div className="crm-opportunity-summary">
+              <div><span>Montant estimé</span><strong>{formatMoney(selectedContact.estimated_amount || 0)}</strong></div>
+              <div><span>Probabilité</span><strong>{Number(selectedContact.probability_percent || selectedContact.probability || 0)} %</strong></div>
+              <div><span>Pipe pondéré</span><strong>{formatMoney(weightedPipe(selectedContact))}</strong></div>
+              <div><span>Signature prévue</span><strong>{selectedContact.expected_signature_month || "-"}</strong></div>
+              <div><span>Famille</span><strong>{selectedContact.product_family || "-"}</strong></div>
+              <div><span>Secteur</span><strong>{selectedContact.sector || "-"}</strong></div>
+            </div>
+
+            <div className="crm-contact-actions">
+              <button className="btn primary" onClick={() => openPhone(selectedContact)}>
+                Appeler
+              </button>
+              <button className="btn small" onClick={() => { openEmail(selectedContact); quickLogEmail(selectedContact); }}>
+                Email
+              </button>
+              <button className="btn small" onClick={() => openMaps(selectedContact)}>
+                Itinéraire
+              </button>
+            </div>
+
+            <form className="crm-drawer-form" onSubmit={saveOpportunity}>
+              <section>
+                <h4>Informations</h4>
+
+                <div className="crm-drawer-grid">
+                  <div>
+                    <label>Client / société</label>
+                    <input value={opportunityForm.company_name} onChange={(e) => updateOpportunityForm("company_name", e.target.value)} />
+                  </div>
+
+                  <div>
+                    <label>Contact</label>
+                    <input value={opportunityForm.contact_name} onChange={(e) => updateOpportunityForm("contact_name", e.target.value)} />
+                  </div>
+
+                  <div>
+                    <label>Email</label>
+                    <input value={opportunityForm.email} onChange={(e) => updateOpportunityForm("email", e.target.value)} />
+                  </div>
+
+                  <div>
+                    <label>Téléphone</label>
+                    <input value={opportunityForm.phone} onChange={(e) => updateOpportunityForm("phone", e.target.value)} />
+                  </div>
+
+                  <div>
+                    <label>Ville</label>
+                    <input value={opportunityForm.city} onChange={(e) => updateOpportunityForm("city", e.target.value)} />
+                  </div>
+
+                  <div>
+                    <label>Étape</label>
+                    <select value={opportunityForm.stage_id} onChange={(e) => updateOpportunityForm("stage_id", e.target.value)}>
+                      <option value="">Aucune</option>
+                      {stages.map((stage) => (
+                        <option key={stage.id} value={stage.id}>{stage.name}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label>Commercial</label>
+                    <select value={opportunityForm.assigned_to} onChange={(e) => updateOpportunityForm("assigned_to", e.target.value)}>
+                      <option value="">Non affecté</option>
+                      {employees.map((employee) => (
+                        <option key={employee.id} value={employee.id}>{employee.name}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label>Priorité</label>
+                    <select value={opportunityForm.priority} onChange={(e) => updateOpportunityForm("priority", e.target.value)}>
+                      <option value="low">Basse</option>
+                      <option value="normal">Normale</option>
+                      <option value="high">Haute</option>
+                      <option value="critical">Critique</option>
+                    </select>
+                  </div>
+                </div>
+              </section>
+
+              <section>
+                <h4>Financier & prévisionnel</h4>
+
+                <div className="crm-drawer-grid">
+                  <div>
+                    <label>Montant estimé HT</label>
+                    <input type="number" value={opportunityForm.estimated_amount} onChange={(e) => updateOpportunityForm("estimated_amount", e.target.value)} />
+                  </div>
+
+                  <div>
+                    <label>Marge estimée %</label>
+                    <input type="number" value={opportunityForm.margin_percent} onChange={(e) => updateOpportunityForm("margin_percent", e.target.value)} />
+                  </div>
+
+                  <div>
+                    <label>Probabilité %</label>
+                    <input type="number" min="0" max="100" value={opportunityForm.probability_percent} onChange={(e) => updateOpportunityForm("probability_percent", e.target.value)} />
+                  </div>
+
+                  <div>
+                    <label>Mois signature prévisionnel</label>
+                    <input type="month" value={opportunityForm.expected_signature_month} onChange={(e) => updateOpportunityForm("expected_signature_month", e.target.value)} />
+                  </div>
+
+                  <div>
+                    <label>Famille produit</label>
+                    <input value={opportunityForm.product_family} onChange={(e) => updateOpportunityForm("product_family", e.target.value)} />
+                  </div>
+
+                  <div>
+                    <label>Secteur</label>
+                    <input value={opportunityForm.sector} onChange={(e) => updateOpportunityForm("sector", e.target.value)} />
+                  </div>
+
+                  <div>
+                    <label>Source lead</label>
+                    <input value={opportunityForm.lead_source} onChange={(e) => updateOpportunityForm("lead_source", e.target.value)} />
+                  </div>
+
+                  <div>
+                    <label>Concurrent</label>
+                    <input value={opportunityForm.competitor} onChange={(e) => updateOpportunityForm("competitor", e.target.value)} />
+                  </div>
+                </div>
+              </section>
+
+              <section>
+                <h4>Liaisons ERP</h4>
+
+                <div className="crm-drawer-grid">
+                  <div>
+                    <label>Projet lié</label>
+                    <select value={opportunityForm.project_id} onChange={(e) => updateOpportunityForm("project_id", e.target.value)}>
+                      <option value="">Aucun</option>
+                      {projects.map((project) => (
+                        <option key={project.id} value={project.id}>
+                          {project.project_code ? `${project.project_code} - ` : ""}{project.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label>Chiffrage lié</label>
+                    <select value={opportunityForm.quote_id} onChange={(e) => updateOpportunityForm("quote_id", e.target.value)}>
+                      <option value="">Aucun</option>
+                      {quotes.map((quote) => (
+                        <option key={quote.id} value={quote.id}>
+                          {quote.title || quote.name || quote.project_name || quote.reference || "Chiffrage"}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="crm-drawer-full">
+                    <label>Notes internes</label>
+                    <textarea value={opportunityForm.notes} onChange={(e) => updateOpportunityForm("notes", e.target.value)} />
+                  </div>
+                </div>
+              </section>
+
+              <div className="crm-drawer-save">
+                <button className="btn primary">Enregistrer la fiche</button>
+              </div>
+            </form>
+
+            <div className="crm-drawer-section">
+              <h4>Ajouter une activité</h4>
+
+              <form className="crm-interaction-form crm-interaction-form-extended" onSubmit={createInteraction}>
+                <div>
+                  <label>Type</label>
+                  <select value={interactionForm.interaction_type} onChange={(e) => setInteractionForm({ ...interactionForm, interaction_type: e.target.value })}>
+                    {INTERACTION_TYPES.map((type) => (
+                      <option key={type} value={type}>{type}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label>Sujet</label>
+                  <input value={interactionForm.subject} onChange={(e) => setInteractionForm({ ...interactionForm, subject: e.target.value })} />
+                </div>
+
+                <div>
+                  <label>Action suivante</label>
+                  <input value={interactionForm.next_action} onChange={(e) => setInteractionForm({ ...interactionForm, next_action: e.target.value })} />
+                </div>
+
+                <div>
+                  <label>Date relance / RDV</label>
+                  <input type="date" value={interactionForm.next_action_date} onChange={(e) => setInteractionForm({ ...interactionForm, next_action_date: e.target.value })} />
+                </div>
+
+                <div>
+                  <label>Heure RDV</label>
+                  <input type="time" value={interactionForm.meeting_time} onChange={(e) => setInteractionForm({ ...interactionForm, meeting_time: e.target.value })} />
+                </div>
+
+                <div>
+                  <label>Lieu RDV</label>
+                  <input value={interactionForm.meeting_location} onChange={(e) => setInteractionForm({ ...interactionForm, meeting_location: e.target.value })} />
+                </div>
+
+                <button className="btn primary">Ajouter activité</button>
+              </form>
+            </div>
+
+            <div className="crm-drawer-section">
+              <h4>Timeline commerciale</h4>
+
+              <div className="crm-timeline">
+                {contactInteractions(selectedContact.id).length === 0 ? (
+                  <p>Aucune activité enregistrée.</p>
+                ) : (
+                  contactInteractions(selectedContact.id).map((interaction) => (
+                    <div className="crm-timeline-item" key={interaction.id}>
+                      <span>{interaction.interaction_type}</span>
+                      <strong>{interaction.subject || interaction.next_action || "-"}</strong>
+                      <small>
+                        {interaction.next_action ? `Action : ${interaction.next_action}` : ""}
+                        {interaction.next_action_date ? ` · ${interaction.next_action_date}` : ""}
+                        {interaction.meeting_time ? ` · ${interaction.meeting_time}` : ""}
+                        {interaction.meeting_location ? ` · ${interaction.meeting_location}` : ""}
+                        {interaction.done ? " · traité" : ""}
+                      </small>
+                      {interaction.call_duration_seconds ? (
+                        <small>Durée appel : {Math.floor(interaction.call_duration_seconds / 60)} min {interaction.call_duration_seconds % 60} s · statut : {interaction.call_status || "-"}</small>
+                      ) : null}
+                      {interaction.notes && <p>{interaction.notes}</p>}
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          </aside>
         </div>
       )}
+
     </section>
   );
 }

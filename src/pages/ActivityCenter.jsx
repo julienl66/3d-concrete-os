@@ -14,6 +14,7 @@ const FILTERS = [
 
 const HIDDEN_DEFAULT_EVENTS = [
   "CRM_CONTACT_CREATED",
+  "CRM_CONTACT_CREATED_ARCHIVED",
 ];
 
 function categoryForEvent(event) {
@@ -125,8 +126,14 @@ export default function ActivityCenter({ user, permissions }) {
 
   const cleanEvents = useMemo(() => {
     return events.filter((event) => {
-      if (showNoise) return true;
-      return !HIDDEN_DEFAULT_EVENTS.includes(event.event_type);
+      const isArchived = event.event_type?.includes("_ARCHIVED") || event.payload?.archived === true;
+      const isMassCrmContact =
+        HIDDEN_DEFAULT_EVENTS.includes(event.event_type) ||
+        (event.entity_type === "crm" && event.event_type?.includes("CONTACT_CREATED"));
+
+      if (showNoise) return !isArchived;
+
+      return !isArchived && !isMassCrmContact;
     });
   }, [events, showNoise]);
 

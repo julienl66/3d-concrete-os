@@ -7768,5 +7768,61 @@ textarea:focus {
   .crm-opportunity-summary {
     grid-template-columns: 1fr;
   }
+}.crm-smart-column {
+  min-width: 360px;
 }
+
+.crm-smart-column-head {
+  display: block;
+  padding-bottom: 12px;
+}
+
+.crm-smart-column-head > div:first-child {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+}
+
+.crm-smart-column-head > div:first-child span {
+  border-radius: 999px;
+  padding: 4px 8px;
+  background: #f8fafc;
+  border: 1px solid #e5e7eb;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.crm-column-kpis {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.crm-column-kpis div {
+  border-radius: 12px;
+  padding: 8px;
+  background: #f8fafc;
+  border: 1px solid #e5e7eb;
+}
+
+.crm-column-kpis small,
+.crm-column-kpis b {
+  display: block;
+}
+
+.crm-column-kpis small {
+  color: #64748b;
+  font-size: 10px;
+  font-weight: 1000;
+  text-transform: uppercase;
+}
+
+.crm-column-kpis b {
+  margin-top: 3px;
+  font-size: 13px;
+}
+
 

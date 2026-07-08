@@ -1045,6 +1045,38 @@ export default function CRM({ user, permissions }) {
     return labels[value] || value || "Normale";
   }
 
+  function stageMetrics(stageContacts) {
+    const raw = stageContacts.reduce(
+      (sum, contact) => sum + Number(contact.estimated_amount || 0),
+      0
+    );
+
+    const weighted = stageContacts.reduce(
+      (sum, contact) => sum + weightedPipe(contact),
+      0
+    );
+
+    const avgProbability =
+      stageContacts.length > 0
+        ? stageContacts.reduce(
+            (sum, contact) => sum + Number(contact.probability_percent || contact.probability || 0),
+            0
+          ) / stageContacts.length
+        : 0;
+
+    const nextMonth = new Date().toISOString().slice(0, 7);
+    const currentMonthForecast = stageContacts
+      .filter((contact) => contact.expected_signature_month === nextMonth)
+      .reduce((sum, contact) => sum + weightedPipe(contact), 0);
+
+    return {
+      raw,
+      weighted,
+      avgProbability,
+      currentMonthForecast,
+    };
+  }
+
   function contactCard(contact) {
     return (
       <div
@@ -1343,17 +1375,39 @@ export default function CRM({ user, permissions }) {
           <div className="crm-board">
             {stages.map((stage) => {
               const stageContacts = filteredContacts.filter((contact) => contact.stage_id === stage.id);
+              const metrics = stageMetrics(stageContacts);
 
               return (
                 <div
-                  className="crm-column"
+                  className="crm-column crm-smart-column"
                   key={stage.id}
                   onDragOver={(e) => e.preventDefault()}
                   onDrop={() => draggedContactId && updateContactStage(draggedContactId, stage.id)}
                 >
-                  <div className="crm-column-head" style={{ borderTopColor: stage.color || "#2563eb" }}>
-                    <strong>{stage.name}</strong>
-                    <span>{stageContacts.length}</span>
+                  <div className="crm-column-head crm-smart-column-head" style={{ borderTopColor: stage.color || "#2563eb" }}>
+                    <div>
+                      <strong>{stage.name}</strong>
+                      <span>{stageContacts.length} opportunité(s)</span>
+                    </div>
+
+                    <div className="crm-column-kpis">
+                      <div>
+                        <small>Pipe brut</small>
+                        <b>{formatMoney(metrics.raw)}</b>
+                      </div>
+                      <div>
+                        <small>Pondéré</small>
+                        <b>{formatMoney(metrics.weighted)}</b>
+                      </div>
+                      <div>
+                        <small>Proba moy.</small>
+                        <b>{Math.round(metrics.avgProbability)} %</b>
+                      </div>
+                      <div>
+                        <small>Ce mois</small>
+                        <b>{formatMoney(metrics.currentMonthForecast)}</b>
+                      </div>
+                    </div>
                   </div>
 
                   <div className="crm-column-body">
@@ -1364,17 +1418,36 @@ export default function CRM({ user, permissions }) {
             })}
 
             <div
-              className="crm-column"
+              className="crm-column crm-smart-column"
               onDragOver={(e) => e.preventDefault()}
               onDrop={() => draggedContactId && updateContactStage(draggedContactId, null)}
             >
-              <div className="crm-column-head" style={{ borderTopColor: "#64748b" }}>
-                <strong>Sans étape</strong>
-                <span>{filteredContacts.filter((contact) => !contact.stage_id).length}</span>
-              </div>
-              <div className="crm-column-body">
-                {filteredContacts.filter((contact) => !contact.stage_id).map(contactCard)}
-              </div>
+              {(() => {
+                const noStageContacts = filteredContacts.filter((contact) => !contact.stage_id);
+                const metrics = stageMetrics(noStageContacts);
+
+                return (
+                  <>
+                    <div className="crm-column-head crm-smart-column-head" style={{ borderTopColor: "#64748b" }}>
+                      <div>
+                        <strong>Sans étape</strong>
+                        <span>{noStageContacts.length} opportunité(s)</span>
+                      </div>
+
+                      <div className="crm-column-kpis">
+                        <div><small>Pipe brut</small><b>{formatMoney(metrics.raw)}</b></div>
+                        <div><small>Pondéré</small><b>{formatMoney(metrics.weighted)}</b></div>
+                        <div><small>Proba moy.</small><b>{Math.round(metrics.avgProbability)} %</b></div>
+                        <div><small>Ce mois</small><b>{formatMoney(metrics.currentMonthForecast)}</b></div>
+                      </div>
+                    </div>
+
+                    <div className="crm-column-body">
+                      {noStageContacts.map(contactCard)}
+                    </div>
+                  </>
+                );
+              })()}
             </div>
           </div>
         </>

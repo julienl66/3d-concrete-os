@@ -2,13 +2,14 @@ import { canAccess } from "../services/permissions.js";
 
 const items = [
   { id: "dashboard", label: "Tableau de bord", icon: "🏠" },
+  { id: "activity", label: "Activity Center", icon: "⚡" },
   { id: "weekly", label: "Points hebdo", icon: "✅" },
+  { id: "bi", label: "Business Intelligence", icon: "📊" },
   { id: "pointage", label: "Pointage", icon: "⏱️" },
   { id: "employes", label: "Employés", icon: "👷" },
   { id: "projets", label: "Projets", icon: "📁" },
   { id: "chiffrage", label: "Chiffrage", icon: "🧮" },
   { id: "crm", label: "CRM", icon: "🤝" },
-  { id: "bi", label: "Business Intelligence", icon: "📊" },
   { id: "planning", label: "Planning", icon: "📅" },
   { id: "stock", label: "Stock", icon: "📦" },
   { id: "couts", label: "Coûts & marges", icon: "💰" },

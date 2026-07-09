@@ -74,8 +74,8 @@ export default function Planning({ user }) {
           employee:employees!production_day_tasks_employee_id_fkey(name),
           production_task_types(name, color)
         `)
-        .gte("task_date", monthStart.toISOString().slice(0, 10))
-        .lte("task_date", monthEnd.toISOString().slice(0, 10))
+        .gte("task_date", dateToInputValue(monthStart))
+        .lte("task_date", dateToInputValue(monthEnd))
         .order("task_date", { ascending: true }),
       supabase
         .from("production_task_resources")
@@ -109,7 +109,17 @@ export default function Planning({ user }) {
   }
 
   function dateToInputValue(date) {
-    return date.toISOString().slice(0, 10);
+    if (!date) return "";
+
+    if (typeof date === "string") {
+      return date.slice(0, 10);
+    }
+
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+
+    return `${year}-${month}-${day}`;
   }
 
   function sameDay(dateA, dateB) {

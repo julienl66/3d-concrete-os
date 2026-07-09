@@ -490,6 +490,16 @@ export default function Planning({ user }) {
     });
   }
 
+  function handleEmployeeMultiSelect(e) {
+    const selectedIds = Array.from(e.target.selectedOptions).map((option) => option.value);
+
+    setForm((current) => ({
+      ...current,
+      employee_ids: selectedIds,
+      employee_id: selectedIds[0] || "",
+    }));
+  }
+
   function addDays(date, days) {
     const next = new Date(date);
     next.setDate(next.getDate() + days);
@@ -1091,20 +1101,34 @@ export default function Planning({ user }) {
                   </button>
                 </div>
 
-                <div className="planning-employee-checklist">
+                <select
+                  multiple
+                  size={Math.min(8, Math.max(4, employees.length))}
+                  className="planning-multi-select"
+                  value={form.employee_ids || []}
+                  onChange={handleEmployeeMultiSelect}
+                >
                   {employees.map((employee) => (
-                    <label
-                      key={employee.id}
-                      className={(form.employee_ids || []).includes(employee.id) ? "selected" : ""}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={(form.employee_ids || []).includes(employee.id)}
-                        onChange={() => toggleEmployee(employee.id)}
-                      />
-                      <span>{employee.name}</span>
-                    </label>
+                    <option key={employee.id} value={employee.id}>
+                      {employee.name}
+                    </option>
                   ))}
+                </select>
+
+                <small className="planning-multi-help">
+                  Maintiens Ctrl sur Windows pour sélectionner plusieurs personnes en même temps.
+                </small>
+
+                <div className="planning-selected-users">
+                  {(form.employee_ids || []).map((employeeId) => {
+                    const employee = employees.find((item) => item.id === employeeId);
+
+                    return (
+                      <span key={employeeId}>
+                        {employee?.name || "Employé"}
+                      </span>
+                    );
+                  })}
                 </div>
               </div>
 

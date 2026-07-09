@@ -13,6 +13,7 @@ export default function CRM({ user, permissions }) {
   const [projects, setProjects] = useState([]);
   const [quotes, setQuotes] = useState([]);
   const [selectedContact, setSelectedContact] = useState(null);
+  const [opportunityTab, setOpportunityTab] = useState("resume");
   const [opportunityForm, setOpportunityForm] = useState(null);
   const [draggedContactId, setDraggedContactId] = useState(null);
   const [message, setMessage] = useState("");
@@ -183,6 +184,56 @@ export default function CRM({ user, permissions }) {
 
   function contactInteractions(contactId) {
     return interactions.filter((interaction) => interaction.contact_id === contactId);
+  }
+
+  function nextActionForContact(contactId) {
+    return contactInteractions(contactId)
+      .filter((interaction) => !interaction.done && interaction.next_action_date)
+      .sort((a, b) => String(a.next_action_date).localeCompare(String(b.next_action_date)))[0] || null;
+  }
+
+  function lastActivityForContact(contactId) {
+    return contactInteractions(contactId)
+      .map((interaction) => interaction.created_at || interaction.interaction_date || interaction.next_action_date)
+      .filter(Boolean)
+      .sort()
+      .at(-1) || null;
+  }
+
+  function daysWithoutActivity(contactId) {
+    const last = lastActivityForContact(contactId);
+    if (!last) return 999;
+    return Math.floor((Date.now() - new Date(last).getTime()) / 86400000);
+  }
+
+  function contactRiskLevel(contact) {
+    const days = daysWithoutActivity(contact.id);
+    const next = nextActionForContact(contact.id);
+    const probability = Number(contact.probability_percent || contact.probability || 0);
+
+    if (next?.next_action_date && next.next_action_date < todayValue()) return "late";
+    if (days >= 30) return "late";
+    if (days >= 14) return "watch";
+    if (probability >= 70) return "hot";
+    return "normal";
+  }
+
+  function timelineForContact(contactId) {
+    return contactInteractions(contactId)
+      .map((interaction) => ({
+        id: interaction.id,
+        date: interaction.created_at || interaction.interaction_date || interaction.next_action_date,
+        type: interaction.interaction_type || "note",
+        title: interaction.subject || interaction.next_action || "Activité CRM",
+        description: interaction.notes || "",
+        meta: [
+          interaction.next_action_date ? `Action ${interaction.next_action_date}` : "",
+          interaction.meeting_time || "",
+          interaction.meeting_location || "",
+          interaction.done ? "Traité" : "",
+        ].filter(Boolean).join(" · "),
+      }))
+      .sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
   }
 
   function lastActivityDate(contactId) {
@@ -1414,6 +1465,19 @@ export default function CRM({ user, permissions }) {
           <strong>{formatMoney(weightedPipe(contact))}</strong>
         </div>
         <small>{contact.product_family || "Famille non renseignée"} · {priorityLabel(contact.priority)}</small>
+        <div className={`crm-risk-line ${contactRiskLevel(contact)}`}>
+          <span>
+            {contactRiskLevel(contact) === "late" && "🔴 À traiter"}
+            {contactRiskLevel(contact) === "watch" && "🟠 À surveiller"}
+            {contactRiskLevel(contact) === "hot" && "🔥 Chaud"}
+            {contactRiskLevel(contact) === "normal" && "🟢 OK"}
+          </span>
+          <small>
+            {nextActionForContact(contact.id)
+              ? `Prochaine action : ${nextActionForContact(contact.id).next_action_date}`
+              : `${daysWithoutActivity(contact.id)} j sans activité`}
+          </small>
+        </div>
 
         <div className="crm-card-actions">
           <button className="btn small" onClick={(e) => { e.stopPropagation(); openPhone(contact); }}>
@@ -1454,6 +1518,9 @@ export default function CRM({ user, permissions }) {
 
           <button className={viewMode === "board" ? "btn primary" : "btn small"} onClick={() => setViewMode("board")}>
             Board
+          </button>
+          <button className={viewMode === "actions" ? "btn primary" : "btn small"} onClick={() => setViewMode("actions")}>
+            Actions
           </button>
           <button className={viewMode === "analytics" ? "btn primary" : "btn small"} onClick={() => setViewMode("analytics")}>
             Analyse
@@ -1996,6 +2063,24 @@ export default function CRM({ user, permissions }) {
               <button className="btn small" onClick={() => setSelectedContact(null)}>Fermer</button>
             </div>
 
+            <div className="crm-drawer-tabs">
+              {[
+                ["resume", "Résumé"],
+                ["activite", "Activité"],
+                ["financier", "Financier"],
+                ["erp", "Projet / ERP"],
+              ].map(([key, label]) => (
+                <button
+                  key={key}
+                  className={opportunityTab === key ? "active" : ""}
+                  onClick={() => setOpportunityTab(key)}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+
+            {opportunityTab === "resume" && (
             <div className="crm-drawer-score">
               <div>
                 <span>Score opportunité</span>
@@ -2037,6 +2122,10 @@ export default function CRM({ user, permissions }) {
               </button>
             </div>
 
+            </div>
+            )}
+
+            {(opportunityTab === "resume" || opportunityTab === "financier" || opportunityTab === "erp") && (
             <form className="crm-drawer-form" onSubmit={saveOpportunity}>
               <section>
                 <h4>Informations</h4>
@@ -2190,6 +2279,10 @@ export default function CRM({ user, permissions }) {
               </div>
             </form>
 
+            </form>
+            )}
+
+            {opportunityTab === "activite" && (
             <div className="crm-drawer-section">
               <h4>Ajouter une activité</h4>
 
@@ -2236,29 +2329,21 @@ export default function CRM({ user, permissions }) {
               <h4>Timeline commerciale</h4>
 
               <div className="crm-timeline">
-                {contactInteractions(selectedContact.id).length === 0 ? (
+                {timelineForContact(selectedContact.id).length === 0 ? (
                   <p>Aucune activité enregistrée.</p>
                 ) : (
-                  contactInteractions(selectedContact.id).map((interaction) => (
-                    <div className="crm-timeline-item" key={interaction.id}>
-                      <span>{interaction.interaction_type}</span>
-                      <strong>{interaction.subject || interaction.next_action || "-"}</strong>
-                      <small>
-                        {interaction.next_action ? `Action : ${interaction.next_action}` : ""}
-                        {interaction.next_action_date ? ` · ${interaction.next_action_date}` : ""}
-                        {interaction.meeting_time ? ` · ${interaction.meeting_time}` : ""}
-                        {interaction.meeting_location ? ` · ${interaction.meeting_location}` : ""}
-                        {interaction.done ? " · traité" : ""}
-                      </small>
-                      {interaction.call_duration_seconds ? (
-                        <small>Durée appel : {Math.floor(interaction.call_duration_seconds / 60)} min {interaction.call_duration_seconds % 60} s · statut : {interaction.call_status || "-"}</small>
-                      ) : null}
-                      {interaction.notes && <p>{interaction.notes}</p>}
+                  timelineForContact(selectedContact.id).map((item) => (
+                    <div className="crm-timeline-item" key={item.id}>
+                      <span>{item.type} · {item.date ? new Date(item.date).toLocaleDateString("fr-FR") : "-"}</span>
+                      <strong>{item.title}</strong>
+                      {item.meta && <small>{item.meta}</small>}
+                      {item.description && <p>{item.description}</p>}
                     </div>
                   ))
                 )}
               </div>
             </div>
+            )}
           </aside>
         </div>
       )}

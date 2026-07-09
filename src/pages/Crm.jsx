@@ -18,6 +18,13 @@ export default function CRM({ user, permissions }) {
   const [message, setMessage] = useState("");
   const [viewMode, setViewMode] = useState("board");
   const [search, setSearch] = useState("");
+  const [crmFilters, setCrmFilters] = useState({
+    assigned_to: "all",
+    priority: "all",
+    forecast_month: "all",
+    stage_id: "all",
+    min_probability: "",
+  });
   const [activeCall, setActiveCall] = useState(null);
 
   const [contactForm, setContactForm] = useState({
@@ -178,6 +185,38 @@ export default function CRM({ user, permissions }) {
     return interactions.filter((interaction) => interaction.contact_id === contactId);
   }
 
+  function lastActivityDate(contactId) {
+    const items = contactInteractions(contactId);
+
+    if (items.length === 0) return null;
+
+    return items
+      .map((item) => item.created_at || item.interaction_date || item.next_action_date)
+      .filter(Boolean)
+      .sort()
+      .at(-1);
+  }
+
+  function daysSinceLastActivity(contactId) {
+    const date = lastActivityDate(contactId);
+
+    if (!date) return 999;
+
+    return Math.floor((Date.now() - new Date(date).getTime()) / 86400000);
+  }
+
+  function isWonStage(stageId) {
+    return stageName(stageId).toLowerCase().includes("gagn") || stageName(stageId).toLowerCase().includes("sign");
+  }
+
+  function isLostStage(stageId) {
+    return stageName(stageId).toLowerCase().includes("perdu");
+  }
+
+  function isOpenOpportunity(contact) {
+    return !isWonStage(contact.stage_id) && !isLostStage(contact.stage_id);
+  }
+
   function contactProjects(contactId) {
     return projects.filter((project) => project.crm_contact_id === contactId);
   }
@@ -187,17 +226,56 @@ export default function CRM({ user, permissions }) {
   }
 
   const filteredContacts = useMemo(() => {
-    const query = search.toLowerCase();
+    const query = search.toLowerCase().trim();
 
     return contacts.filter((contact) => {
+      const matchesSearch =
+        !query ||
+        [
+          contact.company_name,
+          contact.contact_name,
+          contact.city,
+          contact.email,
+          contact.phone,
+          contact.product_family,
+          contact.sector,
+          contact.lead_source,
+          contact.dossier_code,
+        ]
+          .filter(Boolean)
+          .some((value) => String(value).toLowerCase().includes(query));
+
+      const matchesAssigned =
+        crmFilters.assigned_to === "all" ||
+        (crmFilters.assigned_to === "none" && !contact.assigned_to) ||
+        contact.assigned_to === crmFilters.assigned_to;
+
+      const matchesPriority =
+        crmFilters.priority === "all" || contact.priority === crmFilters.priority;
+
+      const matchesForecast =
+        crmFilters.forecast_month === "all" ||
+        contact.expected_signature_month === crmFilters.forecast_month;
+
+      const matchesStage =
+        crmFilters.stage_id === "all" ||
+        (crmFilters.stage_id === "none" && !contact.stage_id) ||
+        contact.stage_id === crmFilters.stage_id;
+
+      const probability = Number(contact.probability_percent || contact.probability || 0);
+      const matchesProbability =
+        !crmFilters.min_probability || probability >= Number(crmFilters.min_probability || 0);
+
       return (
-        (contact.company_name || "").toLowerCase().includes(query) ||
-        (contact.contact_name || "").toLowerCase().includes(query) ||
-        (contact.city || "").toLowerCase().includes(query) ||
-        (contact.email || "").toLowerCase().includes(query)
+        matchesSearch &&
+        matchesAssigned &&
+        matchesPriority &&
+        matchesForecast &&
+        matchesStage &&
+        matchesProbability
       );
     });
-  }, [contacts, search]);
+  }, [contacts, search, crmFilters, stages]);
 
   const alerts = useMemo(() => {
     return interactions
@@ -227,6 +305,37 @@ export default function CRM({ user, permissions }) {
     const action = String(alert.next_action || "").toLowerCase();
     return type === "devis" || subject.includes("devis") || action.includes("devis");
   });
+
+  const openOpportunities = contacts.filter(isOpenOpportunity);
+  const filteredOpenOpportunities = filteredContacts.filter(isOpenOpportunity);
+
+  const crmPipelineRaw = filteredOpenOpportunities.reduce(
+    (sum, contact) => sum + Number(contact.estimated_amount || 0),
+    0
+  );
+
+  const crmPipelineWeighted = filteredOpenOpportunities.reduce(
+    (sum, contact) => sum + weightedPipe(contact),
+    0
+  );
+
+  const hotOpportunities = filteredOpenOpportunities
+    .filter((contact) => Number(contact.probability_percent || contact.probability || 0) >= 70)
+    .sort((a, b) => weightedPipe(b) - weightedPipe(a))
+    .slice(0, 6);
+
+  const staleOpportunities = filteredOpenOpportunities
+    .filter((contact) => daysSinceLastActivity(contact.id) >= 21)
+    .sort((a, b) => daysSinceLastActivity(b.id) - daysSinceLastActivity(a.id))
+    .slice(0, 6);
+
+  const forecastMonths = Array.from(
+    new Set(
+      contacts
+        .map((contact) => contact.expected_signature_month)
+        .filter(Boolean)
+    )
+  ).sort();
 
   const analytics = useMemo(() => {
     const contacted = interactions.filter((i) => ["appel", "email", "rdv", "devis", "relance"].includes(i.interaction_type)).length;
@@ -1455,6 +1564,171 @@ export default function CRM({ user, permissions }) {
         </div>
       </div>
 
+      <div className="crm-command-center">
+        <div className="crm-command-card dark">
+          <span>Pipe filtré</span>
+          <strong>{formatMoney(crmPipelineRaw)}</strong>
+          <small>{filteredOpenOpportunities.length} opportunité(s) ouvertes</small>
+        </div>
+
+        <div className="crm-command-card">
+          <span>Pipe pondéré</span>
+          <strong>{formatMoney(crmPipelineWeighted)}</strong>
+          <small>Montant × probabilité</small>
+        </div>
+
+        <div className="crm-command-card warning">
+          <span>À relancer</span>
+          <strong>{alerts.length}</strong>
+          <small>{overdueAlerts.length} en retard</small>
+        </div>
+
+        <div className="crm-command-card hot">
+          <span>Opportunités chaudes</span>
+          <strong>{hotOpportunities.length}</strong>
+          <small>Probabilité ≥ 70 %</small>
+        </div>
+      </div>
+
+      <div className="card crm-filter-card">
+        <div className="page-head">
+          <div>
+            <h3>Pilotage commercial</h3>
+            <p>Filtre le pipe par commercial, étape, priorité, mois prévisionnel et probabilité.</p>
+          </div>
+
+          <button
+            className="btn small"
+            onClick={() => {
+              setSearch("");
+              setCrmFilters({
+                assigned_to: "all",
+                priority: "all",
+                forecast_month: "all",
+                stage_id: "all",
+                min_probability: "",
+              });
+            }}
+          >
+            Réinitialiser
+          </button>
+        </div>
+
+        <div className="crm-filter-grid">
+          <div>
+            <label>Recherche globale</label>
+            <input
+              placeholder="Client, ville, produit, dossier..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+          </div>
+
+          <div>
+            <label>Commercial</label>
+            <select
+              value={crmFilters.assigned_to}
+              onChange={(e) => setCrmFilters({ ...crmFilters, assigned_to: e.target.value })}
+            >
+              <option value="all">Tous</option>
+              <option value="none">Non affecté</option>
+              {employees.map((employee) => (
+                <option key={employee.id} value={employee.id}>{employee.name}</option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label>Étape</label>
+            <select
+              value={crmFilters.stage_id}
+              onChange={(e) => setCrmFilters({ ...crmFilters, stage_id: e.target.value })}
+            >
+              <option value="all">Toutes</option>
+              <option value="none">Sans étape</option>
+              {stages.map((stage) => (
+                <option key={stage.id} value={stage.id}>{stage.name}</option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label>Priorité</label>
+            <select
+              value={crmFilters.priority}
+              onChange={(e) => setCrmFilters({ ...crmFilters, priority: e.target.value })}
+            >
+              <option value="all">Toutes</option>
+              <option value="low">Basse</option>
+              <option value="normal">Normale</option>
+              <option value="high">Haute</option>
+              <option value="critical">Critique</option>
+            </select>
+          </div>
+
+          <div>
+            <label>Mois prévisionnel</label>
+            <select
+              value={crmFilters.forecast_month}
+              onChange={(e) => setCrmFilters({ ...crmFilters, forecast_month: e.target.value })}
+            >
+              <option value="all">Tous</option>
+              {forecastMonths.map((month) => (
+                <option key={month} value={month}>{month}</option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label>Probabilité mini</label>
+            <input
+              type="number"
+              min="0"
+              max="100"
+              value={crmFilters.min_probability}
+              onChange={(e) => setCrmFilters({ ...crmFilters, min_probability: e.target.value })}
+              placeholder="Ex : 70"
+            />
+          </div>
+        </div>
+      </div>
+
+      <div className="crm-focus-grid">
+        <div className="card">
+          <h3>🔥 Opportunités chaudes</h3>
+          {hotOpportunities.length === 0 ? (
+            <p>Aucune opportunité chaude dans ce filtre.</p>
+          ) : (
+            hotOpportunities.map((contact) => (
+              <button className="crm-focus-row" key={contact.id} onClick={() => setSelectedContact(contact)}>
+                <div>
+                  <strong>{contact.company_name}</strong>
+                  <small>{stageName(contact.stage_id)} · {employeeName(contact.assigned_to)}</small>
+                </div>
+                <span>{formatMoney(weightedPipe(contact))}</span>
+              </button>
+            ))
+          )}
+        </div>
+
+        <div className="card">
+          <h3>⚠ Dossiers sans activité</h3>
+          {staleOpportunities.length === 0 ? (
+            <p>Aucun dossier bloqué à plus de 21 jours.</p>
+          ) : (
+            staleOpportunities.map((contact) => (
+              <button className="crm-focus-row" key={contact.id} onClick={() => setSelectedContact(contact)}>
+                <div>
+                  <strong>{contact.company_name}</strong>
+                  <small>{daysSinceLastActivity(contact.id)} jours sans activité · {employeeName(contact.assigned_to)}</small>
+                </div>
+                <span>{formatMoney(contact.estimated_amount || 0)}</span>
+              </button>
+            ))
+          )}
+        </div>
+      </div>
+
       <div className="card">
         <h3>Ajouter un contact / client</h3>
 
@@ -1574,12 +1848,9 @@ export default function CRM({ user, permissions }) {
 
       {viewMode === "board" && (
         <>
-          <div className="card">
-            <input
-              placeholder="Rechercher un client, une ville, un contact..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-            />
+          <div className="crm-board-summary">
+            <span>{filteredContacts.length} opportunité(s) affichée(s)</span>
+            <strong>{formatMoney(crmPipelineWeighted)} pondéré</strong>
           </div>
 
           <div className="crm-board">

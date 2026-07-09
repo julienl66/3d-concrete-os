@@ -40,6 +40,8 @@ export default function Planning({ user }) {
 
   const [form, setForm] = useState({
     task_date: "",
+    start_time: "08:00",
+    end_time: "10:00",
     project_id: "",
     employee_id: "",
     employee_ids: [],
@@ -287,6 +289,8 @@ export default function Planning({ user }) {
     setEditingTask(null);
     setForm({
       task_date: dateToInputValue(day),
+      start_time: "08:00",
+      end_time: "10:00",
       project_id: "",
       employee_id: "",
       employee_ids: [],
@@ -304,6 +308,8 @@ export default function Planning({ user }) {
     setEditingTask(task);
     setForm({
       task_date: task.task_date || "",
+      start_time: task.start_time || "08:00",
+      end_time: task.end_time || "10:00",
       project_id: task.project_id || "",
       employee_id: task.employee_id || "",
       employee_ids: taskEmployeeIds(task),
@@ -330,6 +336,8 @@ export default function Planning({ user }) {
 
     const payload = {
       task_date: form.task_date,
+      start_time: form.start_time || null,
+      end_time: form.end_time || null,
       project_id: form.project_id || null,
       employee_id: (form.employee_ids?.[0] || form.employee_id) || null,
       task_type_id: form.task_type_id || null,
@@ -399,6 +407,8 @@ export default function Planning({ user }) {
         title: editingTask ? `Tâche modifiée : ${savedTask.title}` : `Tâche créée : ${savedTask.title}`,
         payload: {
           task_date: savedTask.task_date,
+          start_time: savedTask.start_time || null,
+          end_time: savedTask.end_time || null,
           employee_ids: form.employee_ids || [],
           project_id: savedTask.project_id || null,
         },
@@ -540,6 +550,80 @@ export default function Planning({ user }) {
       gridColumn: `${startIndex + 2} / span ${duration}`,
       borderTopColor: task.projects ? projectColor(task) : taskColor(task),
     };
+  }
+
+  const agendaHours = Array.from({ length: 12 }, (_, index) => index + 7);
+
+  function timeToMinutes(value) {
+    if (!value) return 8 * 60;
+    const [hours, minutes] = String(value).split(":").map(Number);
+    return (hours || 0) * 60 + (minutes || 0);
+  }
+
+  function agendaTaskStyle(task) {
+    const start = Math.max(7 * 60, timeToMinutes(task.start_time || "08:00"));
+    const end = Math.max(start + 30, timeToMinutes(task.end_time || "10:00"));
+    const top = ((start - 7 * 60) / 60) * 72;
+    const height = Math.max(36, ((end - start) / 60) * 72);
+
+    return {
+      top: `${top}px`,
+      height: `${height}px`,
+      borderLeftColor: task.projects ? projectColor(task) : taskColor(task),
+    };
+  }
+
+  async function moveTaskToDay(task, day) {
+    const taskDate = dateToInputValue(day);
+
+    const { error } = await supabase
+      .from("production_day_tasks")
+      .update({ task_date: taskDate })
+      .eq("id", task.id);
+
+    if (error) {
+      setMessage(error.message);
+      return;
+    }
+
+    setMessage(`Tâche déplacée au ${new Date(taskDate).toLocaleDateString("fr-FR")}.`);
+    await loadData();
+  }
+
+  async function moveTaskToAgendaSlot(task, day, hour) {
+    const taskDate = dateToInputValue(day);
+    const duration = Math.max(30, timeToMinutes(task.end_time || "10:00") - timeToMinutes(task.start_time || "08:00"));
+    const startMinutes = hour * 60;
+    const endMinutes = startMinutes + duration;
+
+    const startTime = `${String(Math.floor(startMinutes / 60)).padStart(2, "0")}:${String(startMinutes % 60).padStart(2, "0")}`;
+    const endTime = `${String(Math.floor(endMinutes / 60)).padStart(2, "0")}:${String(endMinutes % 60).padStart(2, "0")}`;
+
+    const { error } = await supabase
+      .from("production_day_tasks")
+      .update({
+        task_date: taskDate,
+        start_time: startTime,
+        end_time: endTime,
+      })
+      .eq("id", task.id);
+
+    if (error) {
+      setMessage(error.message);
+      return;
+    }
+
+    setMessage(`Tâche déplacée au ${taskDate} de ${startTime} à ${endTime}.`);
+    await loadData();
+  }
+
+  function onTaskDragStart(e, task) {
+    e.dataTransfer.setData("task_id", task.id);
+  }
+
+  function draggedTaskFromEvent(e) {
+    const taskId = e.dataTransfer.getData("task_id");
+    return dayTasks.find((task) => task.id === taskId);
   }
 
   async function editTaskDates(task) {
@@ -716,6 +800,9 @@ export default function Planning({ user }) {
         <button className={viewMode === "calendar" ? "active" : ""} onClick={() => setViewMode("calendar")}>
           📅 Calendrier
         </button>
+        <button className={viewMode === "agenda" ? "active" : ""} onClick={() => setViewMode("agenda")}>
+          🕘 Agenda semaine
+        </button>
         <button className={viewMode === "atelier" ? "active" : ""} onClick={() => setViewMode("atelier")}>
           👷 Vue atelier
         </button>
@@ -759,6 +846,12 @@ export default function Planning({ user }) {
                     today ? "today" : "",
                   ].join(" ")}
                   key={index}
+                  onDragOver={(e) => day && e.preventDefault()}
+                  onDrop={(e) => {
+                    if (!day) return;
+                    const task = draggedTaskFromEvent(e);
+                    if (task) moveTaskToDay(task, day);
+                  }}
                 >
                   {day && (
                     <>
@@ -777,6 +870,8 @@ export default function Planning({ user }) {
                             className={`production-card task-status-${task.status}`}
                             style={{ borderLeftColor: task.projects ? projectColor(task) : taskColor(task) }}
                             key={task.id}
+                            draggable
+                            onDragStart={(e) => onTaskDragStart(e, task)}
                           >
                             {task.projects && (
                               <div className="project-color-strip" style={{ background: projectColor(task) }} />
@@ -849,6 +944,8 @@ export default function Planning({ user }) {
                           className={`atelier-task-card task-status-${task.status}`}
                           style={{ borderTopColor: task.projects ? projectColor(task) : taskColor(task) }}
                           key={task.id}
+                          draggable
+                          onDragStart={(e) => onTaskDragStart(e, task)}
                         >
                           <strong>{task.title}</strong>
                           <span>{projectLabel(task)}</span>
@@ -1032,6 +1129,24 @@ export default function Planning({ user }) {
                   type="date"
                   value={form.task_date}
                   onChange={(e) => setForm({ ...form, task_date: e.target.value })}
+                />
+              </div>
+
+              <div>
+                <label>Heure début</label>
+                <input
+                  type="time"
+                  value={form.start_time}
+                  onChange={(e) => setForm({ ...form, start_time: e.target.value })}
+                />
+              </div>
+
+              <div>
+                <label>Heure fin</label>
+                <input
+                  type="time"
+                  value={form.end_time}
+                  onChange={(e) => setForm({ ...form, end_time: e.target.value })}
                 />
               </div>
 

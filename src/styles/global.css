@@ -8638,3 +8638,134 @@ textarea:focus {
     margin-top: 8px !important;
   }
 }
+.agenda-card {
+  overflow-x: auto;
+}
+
+.agenda-grid {
+  display: grid;
+  grid-template-columns: 82px repeat(5, minmax(220px, 1fr));
+  min-width: 1180px;
+  border: 1px solid #e5e7eb;
+  border-radius: 22px;
+  overflow: hidden;
+  background: white;
+}
+
+.agenda-time-col,
+.agenda-day-col {
+  border-right: 1px solid #e5e7eb;
+}
+
+.agenda-corner,
+.agenda-day-head {
+  height: 64px;
+  padding: 12px;
+  background: #f8fafc;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.agenda-day-head strong,
+.agenda-day-head span {
+  display: block;
+}
+
+.agenda-day-head strong {
+  text-transform: capitalize;
+  color: #0f172a;
+}
+
+.agenda-day-head span {
+  color: #64748b;
+  font-weight: 800;
+}
+
+.agenda-hour-label {
+  height: 72px;
+  padding: 8px;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 900;
+  border-bottom: 1px solid #eef2f7;
+  text-align: right;
+}
+
+.agenda-day-body {
+  position: relative;
+  height: 864px;
+  background: #ffffff;
+}
+
+.agenda-hour-slot {
+  height: 72px;
+  border-bottom: 1px solid #eef2f7;
+}
+
+.agenda-hour-slot:hover {
+  background: #f8fafc;
+}
+
+.agenda-task {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  border-left: 6px solid #2563eb;
+  border-radius: 14px;
+  padding: 8px 10px;
+  background: #eff6ff;
+  border-top: 1px solid #bfdbfe;
+  border-right: 1px solid #bfdbfe;
+  border-bottom: 1px solid #bfdbfe;
+  box-shadow: 0 12px 25px rgba(37, 99, 235, 0.14);
+  overflow: hidden;
+  cursor: grab;
+}
+
+.agenda-task:active {
+  cursor: grabbing;
+}
+
+.agenda-task strong,
+.agenda-task small,
+.agenda-task span {
+  display: block;
+}
+
+.agenda-task strong {
+  font-size: 13px;
+  color: #0f172a;
+}
+
+.agenda-task small {
+  margin-top: 3px;
+  color: #475569;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.agenda-task span {
+  margin-top: 4px;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.production-card,
+.atelier-task-card {
+  cursor: grab;
+}
+
+.production-calendar-day {
+  transition: background 0.15s ease, outline 0.15s ease;
+}
+
+.production-calendar-day:hover {
+  outline: 2px dashed #f59e0b;
+  outline-offset: -6px;
+}
+
+@media (max-width: 900px) {
+  .agenda-grid {
+    grid-template-columns: 70px repeat(5, minmax(190px, 1fr));
+  }
+}

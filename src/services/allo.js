@@ -31,12 +31,44 @@ export async function loadAlloCallsForContact(contactId) {
   return data || [];
 }
 
-export function openAlloCall(phone) {
-  if (!phone) {
+function normalizePhoneForAllo(phone) {
+  const digits = String(phone || "").replace(/\D/g, "");
+
+  if (!digits) {
     throw new Error("Aucun numéro de téléphone n'est renseigné.");
   }
 
-  const normalizedPhone = String(phone).replace(/\s+/g, "");
+  // 06XXXXXXXX → +336XXXXXXXX
+  if (digits.length === 10 && digits.startsWith("0")) {
+    return `+33${digits.slice(1)}`;
+  }
 
-  window.location.href = `tel:${normalizedPhone}`;
+  // 336XXXXXXXX → +336XXXXXXXX
+  if (digits.startsWith("33")) {
+    return `+${digits}`;
+  }
+
+  // Numéro déjà international sans le +
+  return `+${digits}`;
+}
+
+export function openAlloCall(phone) {
+  const normalizedPhone = normalizePhoneForAllo(phone);
+
+  const alloUrl =
+    `https://web.withallo.com/?number=${encodeURIComponent(normalizedPhone)}`;
+
+  const alloWindow = window.open(
+    alloUrl,
+    "allo-call",
+    "width=480,height=820,resizable=yes,scrollbars=yes"
+  );
+
+  if (!alloWindow) {
+    throw new Error(
+      "Le navigateur a bloqué l'ouverture d'Allo. Autorise les fenêtres pop-up pour cet ERP."
+    );
+  }
+
+  alloWindow.focus();
 }

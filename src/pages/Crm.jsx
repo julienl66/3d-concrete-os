@@ -3,6 +3,7 @@ import { supabase } from "../services/supabase.js";
 import { canAccess } from "../services/permissions.js";
 import { emitEvent } from "../services/events.js";
 import AlloCallHistory from "../components/AlloCallHistory.jsx";
+import { openAlloCall } from "../services/allo.js";
 
 const INTERACTION_TYPES = ["note", "appel", "email", "rdv", "devis", "relance"];
 
@@ -1216,15 +1217,12 @@ export default function CRM({ user, permissions }) {
       return;
     }
 
-    const phone = cleanPhone(contact.phone);
-
-    setActiveCall({
-      contact,
-      phone,
-      startedAt: new Date().toISOString(),
-    });
-
-    window.location.href = `tel:${phone}`;
+    try {
+      openAlloCall(contact.phone);
+      setMessage(`Ouverture d'Allo pour appeler ${contact.company_name}.`);
+    } catch (error) {
+      setMessage(error?.message || "Impossible d'ouvrir Allo.");
+    }
   }
 
   function openEmail(contact) {
@@ -1466,31 +1464,6 @@ export default function CRM({ user, permissions }) {
       </div>
 
       {message && <div className="alert info">{message}</div>}
-
-      {activeCall && (
-        <div className="card crm-call-banner">
-          <div>
-            <span>Appel en cours / à enregistrer</span>
-            <strong>{activeCall.contact.company_name}</strong>
-            <small>{activeCall.phone} · lancé à {new Date(activeCall.startedAt).toLocaleTimeString("fr-FR")}</small>
-          </div>
-
-          <div className="inline-actions">
-            <button className="btn primary" onClick={() => saveCallInteraction("answered")}>
-              Appel réussi
-            </button>
-            <button className="btn small" onClick={() => saveCallInteraction("voicemail")}>
-              Messagerie
-            </button>
-            <button className="btn small" onClick={() => saveCallInteraction("no_answer")}>
-              Pas de réponse
-            </button>
-            <button className="btn small danger-soft" onClick={() => setActiveCall(null)}>
-              Annuler
-            </button>
-          </div>
-        </div>
-      )}
 
       <div className="crm-alerts-grid crm-alerts-grid-extended">
         <div className="card crm-alert-card overdue">

@@ -8906,3 +8906,118 @@ textarea:focus {
     margin-top: 8px;
   }
 }
+.allo-panel {
+  margin-top: 18px;
+  padding: 18px;
+  border-radius: 24px;
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+}
+
+.allo-panel-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.allo-panel-head h3,
+.allo-panel-head p {
+  margin-top: 0;
+}
+
+.allo-empty {
+  padding: 18px;
+  border-radius: 18px;
+  background: #f8fafc;
+  border: 1px dashed #cbd5e1;
+}
+
+.allo-empty strong,
+.allo-empty small {
+  display: block;
+}
+
+.allo-empty small {
+  margin-top: 6px;
+  color: #64748b;
+  font-weight: 800;
+}
+
+.allo-call-list {
+  display: grid;
+  gap: 12px;
+}
+
+.allo-call-card {
+  padding: 14px;
+  border-radius: 18px;
+  background: #f8fafc;
+  border: 1px solid #e5e7eb;
+}
+
+.allo-call-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.allo-call-card strong,
+.allo-call-card small {
+  display: block;
+}
+
+.allo-call-card small {
+  margin-top: 4px;
+  color: #64748b;
+  font-weight: 850;
+}
+
+.allo-call-summary {
+  margin-top: 12px;
+  padding: 12px;
+  border-radius: 14px;
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+}
+
+.allo-call-summary p {
+  margin: 6px 0 0;
+  color: #334155;
+}
+
+.allo-transcript {
+  margin-top: 12px;
+}
+
+.allo-transcript summary {
+  cursor: pointer;
+  font-weight: 900;
+  color: #334155;
+}
+
+.allo-transcript pre {
+  white-space: pre-wrap;
+  max-height: 320px;
+  overflow: auto;
+  margin-top: 10px;
+  padding: 12px;
+  border-radius: 14px;
+  background: #0f172a;
+  color: #f8fafc;
+  font-size: 12px;
+}
+
+@media (max-width: 760px) {
+  .allo-panel-head,
+  .allo-call-card-head {
+    display: block;
+  }
+
+  .allo-panel-head .inline-actions,
+  .allo-call-card-head .btn {
+    margin-top: 10px;
+  }
+}

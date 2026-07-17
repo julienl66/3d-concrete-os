@@ -1,46 +1,229 @@
-// Follow this setup guide to integrate the Deno language server with your editor:
-// https://deno.land/manual/getting_started/setup_your_environment
-// This enables autocomplete, go to definition, etc.
-
-// Setup type definitions for built-in Supabase Runtime APIs
-import "@supabase/functions-js/edge-runtime.d.ts";
-import { withSupabase } from "@supabase/server";
-
-console.log("Hello from Functions!");
-
-// This endpoint uses 'publishable' | 'secret' access, apiKey is required.
-// Use publishable for Client-facing, key-validated endpoints
-// Use secret for Server-to-server, internal calls
-export default {
-  fetch: withSupabase({ auth: ["publishable", "secret"] }, async (req, ctx) => {
-    // Called by another service with a secret key
-    // ctx.supabaseAdmin bypasses RLS — use for privileged operations
-    /*
-    if (ctx.authMode === "secret") {
-      const { user_id } = await req.json();
-      const { data } = await ctx.supabaseAdmin.auth.admin.getUserById(user_id);
-
-      return Response.json({
-        email: data?.user?.email,
-      });
-    }
-    */
-
-    const { name } = await req.json();
-
-    return Response.json({
-      message: `Hello ${name}!`,
-    });
-  }),
+type RequestBody = {
+  user_id?: string;
+  return_url?: string;
 };
 
-/* To invoke locally:
+type StatePayload = {
+  user_id: string;
+  nonce: string;
+  issued_at: number;
+  expires_at: number;
+};
 
-  1. Run `supabase start` (see: https://supabase.com/docs/reference/cli/supabase-start)
-  2. Make an HTTP request:
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers":
+    "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+};
 
-  curl -i --location --request POST 'http://127.0.0.1:54321/functions/v1/gmail-auth' \
-    --header 'apiKey: sb_publishable_ACJWlzQHlZjBrEguHvfOxg_3BJgxAaH' \
-    --data '{"name":"Functions"}'
+function bytesToBase64Url(bytes: Uint8Array): string {
+  let binary = "";
 
-*/
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte);
+  }
+
+  return btoa(binary)
+    .replaceAll("+", "-")
+    .replaceAll("/", "_")
+    .replaceAll("=", "");
+}
+
+function textToBase64Url(value: string): string {
+  return bytesToBase64Url(
+    new TextEncoder().encode(value),
+  );
+}
+
+async function createSignedState(
+  payload: StatePayload,
+  secret: string,
+): Promise<string> {
+  const encodedPayload = textToBase64Url(
+    JSON.stringify(payload),
+  );
+
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(secret),
+    {
+      name: "HMAC",
+      hash: "SHA-256",
+    },
+    false,
+    ["sign"],
+  );
+
+  const signature = await crypto.subtle.sign(
+    "HMAC",
+    key,
+    new TextEncoder().encode(encodedPayload),
+  );
+
+  const encodedSignature = bytesToBase64Url(
+    new Uint8Array(signature),
+  );
+
+  return `${encodedPayload}.${encodedSignature}`;
+}
+
+function jsonResponse(
+  body: Record<string, unknown>,
+  status = 200,
+): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: {
+      ...corsHeaders,
+      "Content-Type": "application/json",
+      "Cache-Control": "no-store",
+    },
+  });
+}
+
+Deno.serve(async (req: Request): Promise<Response> => {
+  if (req.method === "OPTIONS") {
+    return new Response("ok", {
+      headers: corsHeaders,
+    });
+  }
+
+  if (req.method !== "POST") {
+    return jsonResponse(
+      { error: "Method not allowed" },
+      405,
+    );
+  }
+
+  try {
+    const {
+      user_id: userId,
+    } = (await req.json()) as RequestBody;
+
+    if (!userId || typeof userId !== "string") {
+      return jsonResponse(
+        {
+          error:
+            "L’identifiant de l’utilisateur ERP est manquant.",
+        },
+        400,
+      );
+    }
+
+    const googleClientId = Deno.env.get(
+      "GOOGLE_CLIENT_ID",
+    );
+
+    const googleRedirectUri = Deno.env.get(
+      "GOOGLE_REDIRECT_URI",
+    );
+
+    const googleStateSecret = Deno.env.get(
+      "GOOGLE_STATE_SECRET",
+    );
+
+    if (
+      !googleClientId ||
+      !googleRedirectUri ||
+      !googleStateSecret
+    ) {
+      console.error("Configuration OAuth incomplète", {
+        hasGoogleClientId: Boolean(googleClientId),
+        hasGoogleRedirectUri: Boolean(
+          googleRedirectUri,
+        ),
+        hasGoogleStateSecret: Boolean(
+          googleStateSecret,
+        ),
+      });
+
+      return jsonResponse(
+        {
+          error:
+            "La configuration OAuth Google est incomplète.",
+        },
+        500,
+      );
+    }
+
+    const now = Math.floor(Date.now() / 1000);
+
+    const state = await createSignedState(
+      {
+        user_id: userId,
+        nonce: crypto.randomUUID(),
+        issued_at: now,
+        expires_at: now + 10 * 60,
+      },
+      googleStateSecret,
+    );
+
+    const authorizationUrl = new URL(
+      "https://accounts.google.com/o/oauth2/v2/auth",
+    );
+
+    authorizationUrl.searchParams.set(
+      "client_id",
+      googleClientId,
+    );
+
+    authorizationUrl.searchParams.set(
+      "redirect_uri",
+      googleRedirectUri,
+    );
+
+    authorizationUrl.searchParams.set(
+      "response_type",
+      "code",
+    );
+
+    authorizationUrl.searchParams.set(
+      "access_type",
+      "offline",
+    );
+
+    authorizationUrl.searchParams.set(
+      "prompt",
+      "consent",
+    );
+
+    authorizationUrl.searchParams.set(
+      "include_granted_scopes",
+      "true",
+    );
+
+    authorizationUrl.searchParams.set(
+      "scope",
+      [
+        "openid",
+        "email",
+        "profile",
+        "https://www.googleapis.com/auth/gmail.readonly",
+      ].join(" "),
+    );
+
+    authorizationUrl.searchParams.set(
+      "state",
+      state,
+    );
+
+    return jsonResponse({
+      url: authorizationUrl.toString(),
+    });
+  } catch (error) {
+    console.error("gmail-auth error:", error);
+
+    const message =
+      error instanceof Error
+        ? error.message
+        : "Erreur inconnue";
+
+    return jsonResponse(
+      {
+        error: message,
+      },
+      500,
+    );
+  }
+});

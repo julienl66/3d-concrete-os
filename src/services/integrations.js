@@ -1,42 +1,34 @@
 import { supabase } from "./supabase.js";
 
-export async function connectGoogle() {
-  const {
-    data: { session },
-    error: sessionError,
-  } = await supabase.auth.getSession();
-
-  if (sessionError) {
-    throw new Error(sessionError.message);
-  }
-
-  if (!session?.access_token) {
+export async function connectGoogle(userId) {
+  if (!userId) {
     throw new Error(
-      "Ta session a expiré. Déconnecte-toi puis reconnecte-toi à l’ERP."
+      "Impossible d'identifier l'utilisateur connecté."
     );
   }
 
   const { data, error } = await supabase.functions.invoke("gmail-auth", {
     body: {
+      user_id: userId,
       return_url: `${window.location.origin}/administration`,
-    },
-    headers: {
-      Authorization: `Bearer ${session.access_token}`,
     },
   });
 
   if (error) {
-    let message = error.message || "Impossible de lancer la connexion Google.";
+    let message =
+      error.message ||
+      "Impossible de lancer la connexion Google.";
 
     try {
       const errorBody = await error.context?.json();
+
       message =
         errorBody?.error ||
         errorBody?.message ||
         errorBody?.details ||
         message;
     } catch {
-      // La réponse d’erreur ne contient pas forcément de JSON.
+      // La réponse ne contient pas forcément de JSON.
     }
 
     throw new Error(message);
@@ -49,10 +41,13 @@ export async function connectGoogle() {
     data?.oauth_url;
 
   if (!authorizationUrl) {
-    console.error("Réponse gmail-auth inattendue :", data);
+    console.error(
+      "Réponse inattendue de gmail-auth :",
+      data
+    );
 
     throw new Error(
-      "La fonction gmail-auth n’a pas renvoyé l’URL Google."
+      "La fonction gmail-auth n'a pas renvoyé l'URL Google."
     );
   }
 
@@ -66,19 +61,17 @@ export async function getGoogleIntegrationAccount(userId) {
 
   const { data, error } = await supabase
     .from("integration_accounts")
-    .select(
-      `
-        id,
-        provider,
-        email,
-        display_name,
-        status,
-        connected_at,
-        token_expires_at,
-        scopes,
-        metadata
-      `
-    )
+    .select(`
+      id,
+      provider,
+      email,
+      display_name,
+      status,
+      connected_at,
+      token_expires_at,
+      scopes,
+      metadata
+    `)
     .eq("user_id", userId)
     .eq("provider", "google")
     .order("connected_at", { ascending: false })

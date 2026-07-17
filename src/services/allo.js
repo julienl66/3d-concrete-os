@@ -38,37 +38,66 @@ function normalizePhoneForAllo(phone) {
     throw new Error("Aucun numéro de téléphone n'est renseigné.");
   }
 
-  // 06XXXXXXXX → +336XXXXXXXX
   if (digits.length === 10 && digits.startsWith("0")) {
     return `+33${digits.slice(1)}`;
   }
 
-  // 336XXXXXXXX → +336XXXXXXXX
+  if (digits.startsWith("0033")) {
+    return `+33${digits.slice(4)}`;
+  }
+
   if (digits.startsWith("33")) {
     return `+${digits}`;
   }
 
-  // Numéro déjà international sans le +
   return `+${digits}`;
 }
 
-export function openAlloCall(phone) {
+export async function openAlloCall(phone) {
   const normalizedPhone = normalizePhoneForAllo(phone);
 
-  const alloUrl =
-    `https://web.withallo.com/?number=${encodeURIComponent(normalizedPhone)}`;
-
+  // On ouvre immédiatement une fenêtre vide pour éviter
+  // que Chrome bloque la pop-up après l'appel asynchrone.
   const alloWindow = window.open(
-    alloUrl,
+    "about:blank",
     "allo-call",
     "width=480,height=820,resizable=yes,scrollbars=yes"
   );
 
   if (!alloWindow) {
     throw new Error(
-      "Le navigateur a bloqué l'ouverture d'Allo. Autorise les fenêtres pop-up pour cet ERP."
+      "Chrome a bloqué l'ouverture d'Allo. Autorise les pop-ups pour l'ERP."
     );
   }
 
+  alloWindow.document.title = "Ouverture d'Allo...";
+  alloWindow.document.body.innerHTML =
+    "<p style='font-family:Arial;padding:20px'>Recherche du contact dans Allo...</p>";
+
+  const { data, error } = await supabase.functions.invoke(
+    "allo-open-contact",
+    {
+      body: {
+        phone: normalizedPhone,
+        allo_number: "+33745804549",
+      },
+    }
+  );
+
+  if (error) {
+    alloWindow.close();
+    throw error;
+  }
+
+  if (!data?.success || !data?.allo_url) {
+    alloWindow.close();
+    throw new Error(
+      data?.error || "Allo n'a pas retourné d'URL pour ce contact."
+    );
+  }
+
+  alloWindow.location.href = data.allo_url;
   alloWindow.focus();
+
+  return data;
 }

@@ -1,20 +1,58 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   connectGoogle,
   getGoogleIntegrationAccount,
 } from "../services/integrations.js";
 
-export default function IntegrationSettings({ user, setMessage }) {
-  const [googleAccount, setGoogleAccount] = useState(null);
+function getStoredUser() {
+  try {
+    const storedUser = localStorage.getItem("3dc_user");
+
+    if (!storedUser) {
+      return null;
+    }
+
+    return JSON.parse(storedUser);
+  } catch (error) {
+    console.error(
+      "Impossible de lire l'utilisateur enregistré :",
+      error
+    );
+
+    return null;
+  }
+}
+
+export default function IntegrationSettings({
+  user,
+  setMessage,
+}) {
+  const [googleAccount, setGoogleAccount] =
+    useState(null);
+
   const [loading, setLoading] = useState(true);
-  const [connecting, setConnecting] = useState(false);
+  const [connecting, setConnecting] =
+    useState(false);
+
+  const currentUser = useMemo(() => {
+    return user || getStoredUser();
+  }, [user]);
+
+  const currentUserId =
+    currentUser?.id ||
+    currentUser?.user_id ||
+    currentUser?.employee_id ||
+    currentUser?.employeeId ||
+    null;
 
   useEffect(() => {
     loadGoogleAccount();
-  }, [user?.id]);
+  }, [currentUserId]);
 
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
+    const params = new URLSearchParams(
+      window.location.search
+    );
 
     const integration = params.get("integration");
     const status = params.get("status");
@@ -52,20 +90,34 @@ export default function IntegrationSettings({ user, setMessage }) {
       {},
       document.title,
       `${window.location.pathname}${
-        remainingQuery ? `?${remainingQuery}` : ""
+        remainingQuery
+          ? `?${remainingQuery}`
+          : ""
       }${window.location.hash}`
     );
   }, []);
 
   async function loadGoogleAccount() {
+    if (!currentUserId) {
+      setGoogleAccount(null);
+      setLoading(false);
+      return;
+    }
+
     try {
       setLoading(true);
 
-      const account = await getGoogleIntegrationAccount(user?.id);
+      const account =
+        await getGoogleIntegrationAccount(
+          currentUserId
+        );
 
       setGoogleAccount(account);
     } catch (error) {
-      console.error("Chargement intégration Google :", error);
+      console.error(
+        "Chargement intégration Google :",
+        error
+      );
 
       setMessage(
         error instanceof Error
@@ -80,11 +132,31 @@ export default function IntegrationSettings({ user, setMessage }) {
   async function handleConnectGoogle() {
     try {
       setConnecting(true);
+
+      if (!currentUserId) {
+        console.error(
+          "Utilisateur transmis au composant :",
+          user
+        );
+
+        console.error(
+          "Utilisateur enregistré dans localStorage :",
+          getStoredUser()
+        );
+
+        throw new Error(
+          "Impossible d'identifier l'utilisateur connecté."
+        );
+      }
+
       setMessage("Redirection vers Google…");
 
-      await connectGoogle();
+      await connectGoogle(currentUserId);
     } catch (error) {
-      console.error("Connexion Google :", error);
+      console.error(
+        "Connexion Google :",
+        error
+      );
 
       setMessage(
         error instanceof Error
@@ -104,8 +176,10 @@ export default function IntegrationSettings({ user, setMessage }) {
       <div className="integration-settings-head">
         <div>
           <h3>Intégrations</h3>
+
           <p>
-            Connecte les services externes utilisés par ton compte ERP.
+            Connecte les services externes utilisés
+            par ton compte ERP.
           </p>
         </div>
 
@@ -113,15 +187,19 @@ export default function IntegrationSettings({ user, setMessage }) {
           type="button"
           className="btn small"
           onClick={loadGoogleAccount}
-          disabled={loading}
+          disabled={loading || !currentUserId}
         >
-          {loading ? "Actualisation…" : "Actualiser"}
+          {loading
+            ? "Actualisation…"
+            : "Actualiser"}
         </button>
       </div>
 
       <div className="integration-list">
         <div className="integration-row">
-          <div className="integration-provider-icon">G</div>
+          <div className="integration-provider-icon">
+            G
+          </div>
 
           <div className="integration-provider-content">
             <div className="integration-provider-title">
@@ -165,7 +243,9 @@ export default function IntegrationSettings({ user, setMessage }) {
               type="button"
               className="btn primary"
               onClick={handleConnectGoogle}
-              disabled={connecting}
+              disabled={
+                connecting || !currentUserId
+              }
             >
               {connecting
                 ? "Connexion…"
@@ -177,7 +257,9 @@ export default function IntegrationSettings({ user, setMessage }) {
         </div>
 
         <div className="integration-row">
-          <div className="integration-provider-icon">A</div>
+          <div className="integration-provider-icon">
+            A
+          </div>
 
           <div className="integration-provider-content">
             <div className="integration-provider-title">
@@ -189,13 +271,16 @@ export default function IntegrationSettings({ user, setMessage }) {
             </div>
 
             <small>
-              Appels, SMS et conversations téléphoniques
+              Appels, SMS et conversations
+              téléphoniques
             </small>
           </div>
         </div>
 
         <div className="integration-row">
-          <div className="integration-provider-icon">C</div>
+          <div className="integration-provider-icon">
+            C
+          </div>
 
           <div className="integration-provider-content">
             <div className="integration-provider-title">

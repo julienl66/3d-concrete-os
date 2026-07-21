@@ -3,6 +3,7 @@ import { supabase } from "../services/supabase.js";
 import { canAccess } from "../services/permissions.js";
 import { emitEvent } from "../services/events.js";
 import AlloCallHistory from "../components/AlloCallHistory.jsx";
+import CrmEmailPanel from "../components/CrmEmailPanel.jsx";
 import { openAlloCall } from "../services/allo.js";
 
 const INTERACTION_TYPES = ["note", "appel", "email", "rdv", "devis", "relance"];
@@ -28,6 +29,7 @@ export default function CRM({ user, permissions }) {
     min_probability: "",
   });
   const [activeCall, setActiveCall] = useState(null);
+  const [emailComposerSignal, setEmailComposerSignal] = useState(0);
 
   const [contactForm, setContactForm] = useState({
     company_name: "",
@@ -1231,7 +1233,8 @@ export default function CRM({ user, permissions }) {
       return;
     }
 
-    window.location.href = `mailto:${contact.email}`;
+    setSelectedContact(contact);
+    setEmailComposerSignal((value) => value + 1);
   }
 
   async function saveCallInteraction(status = "called") {
@@ -1418,7 +1421,7 @@ export default function CRM({ user, permissions }) {
           <button className="btn small" onClick={(e) => { e.stopPropagation(); openPhone(contact); }}>
             Appeler
           </button>
-          <button className="btn small" onClick={(e) => { e.stopPropagation(); openEmail(contact); quickLogEmail(contact); }}>
+          <button className="btn small" onClick={(e) => { e.stopPropagation(); openEmail(contact); }}>
             Email
           </button>
           <button className="btn small" onClick={(e) => { e.stopPropagation(); editContact(contact); }}>
@@ -2000,7 +2003,7 @@ export default function CRM({ user, permissions }) {
               <button className="btn primary" onClick={() => openPhone(selectedContact)}>
                 Appeler
               </button>
-              <button className="btn small" onClick={() => { openEmail(selectedContact); quickLogEmail(selectedContact); }}>
+              <button className="btn small" onClick={() => openEmail(selectedContact)}>
                 Email
               </button>
               <button className="btn small" onClick={() => openMaps(selectedContact)}>
@@ -2204,6 +2207,15 @@ export default function CRM({ user, permissions }) {
 
                 <button className="btn primary">Ajouter activité</button>
               </form>
+            </div>
+
+            <div className="crm-drawer-section">
+              <CrmEmailPanel
+                contact={selectedContact}
+                user={user}
+                openComposerSignal={emailComposerSignal}
+                onActivityCreated={loadData}
+              />
             </div>
 
             <div className="crm-drawer-section">

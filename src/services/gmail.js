@@ -59,6 +59,38 @@ export async function getGmailThread(userId, threadId) {
   return { thread, messages: messages || [] };
 }
 
+
+export async function listGmailMessagesForContact(userId, email, limit = 500) {
+  const normalizedEmail = String(email || "").trim().toLowerCase();
+  if (!userId || !normalizedEmail) return [];
+
+  const { data, error } = await supabase
+    .from("gmail_messages")
+    .select("*")
+    .eq("user_id", userId)
+    .order("created_at", { ascending: false })
+    .limit(limit);
+
+  if (error) throw new Error(error.message);
+
+  return (data || [])
+    .filter((message) => {
+      const sender = String(message.sender_email || "").trim().toLowerCase();
+      const recipients = [
+        ...(Array.isArray(message.to_emails) ? message.to_emails : []),
+        ...(Array.isArray(message.cc_emails) ? message.cc_emails : []),
+        ...(Array.isArray(message.bcc_emails) ? message.bcc_emails : []),
+      ].map((value) => String(value || "").trim().toLowerCase());
+
+      return sender === normalizedEmail || recipients.includes(normalizedEmail);
+    })
+    .sort((a, b) => {
+      const aDate = new Date(a.received_at || a.sent_at || a.created_at || 0).getTime();
+      const bDate = new Date(b.received_at || b.sent_at || b.created_at || 0).getTime();
+      return bDate - aDate;
+    });
+}
+
 export async function runGmailAction(userId, action, payload = {}) {
   const { data, error } = await supabase.functions.invoke("gmail-actions", {
     body: { user_id: userId, action, ...payload },

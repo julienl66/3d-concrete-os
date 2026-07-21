@@ -1,5 +1,23 @@
 import { supabase } from "./supabase.js";
 
+async function readFunctionError(error, fallbackMessage) {
+  let message = error?.message || fallbackMessage;
+
+  try {
+    const errorBody = await error?.context?.json();
+
+    message =
+      errorBody?.error ||
+      errorBody?.message ||
+      errorBody?.details ||
+      message;
+  } catch {
+    // Ignore si pas de JSON
+  }
+
+  return message;
+}
+
 export async function connectGoogle(userId) {
   if (!userId) {
     throw new Error(
@@ -7,31 +25,46 @@ export async function connectGoogle(userId) {
     );
   }
 
-  const { data, error } = await supabase.functions.invoke("gmail-auth", {
-    body: {
-      user_id: userId,
-      return_url: `${window.location.origin}/administration`,
-    },
-  });
+  const { data: employee, error: employeeError } =
+    await supabase
+      .from("employees")
+      .select("id, name, email, active")
+      .eq("id", userId)
+      .maybeSingle();
+
+  if (employeeError) {
+    throw new Error(
+      `Impossible de vérifier l'utilisateur ERP : ${employeeError.message}`
+    );
+  }
+
+  if (!employee) {
+    throw new Error(
+      `L'utilisateur ERP ${userId} n'existe pas dans la table employees.`
+    );
+  }
+
+  if (employee.active === false) {
+    throw new Error(
+      "Ce compte utilisateur ERP est désactivé."
+    );
+  }
+
+  const { data, error } =
+    await supabase.functions.invoke("gmail-auth", {
+      body: {
+        user_id: employee.id,
+        return_url: `${window.location.origin}/administration`,
+      },
+    });
 
   if (error) {
-    let message =
-      error.message ||
-      "Impossible de lancer la connexion Google.";
-
-    try {
-      const errorBody = await error.context?.json();
-
-      message =
-        errorBody?.error ||
-        errorBody?.message ||
-        errorBody?.details ||
-        message;
-    } catch {
-      // La réponse ne contient pas forcément de JSON.
-    }
-
-    throw new Error(message);
+    throw new Error(
+      await readFunctionError(
+        error,
+        "Impossible de lancer la connexion Google."
+      )
+    );
   }
 
   const authorizationUrl =
@@ -41,11 +74,6 @@ export async function connectGoogle(userId) {
     data?.oauth_url;
 
   if (!authorizationUrl) {
-    console.error(
-      "Réponse inattendue de gmail-auth :",
-      data
-    );
-
     throw new Error(
       "La fonction gmail-auth n'a pas renvoyé l'URL Google."
     );
@@ -59,28 +87,69 @@ export async function getGoogleIntegrationAccount(userId) {
     return null;
   }
 
-  const { data, error } = await supabase
-    .from("integration_accounts")
-    .select(`
-      id,
-      provider,
-      email,
-      display_name,
-      status,
-      connected_at,
-      token_expires_at,
-      scopes,
-      metadata
-    `)
-    .eq("user_id", userId)
-    .eq("provider", "google")
-    .order("connected_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+  // On passe par l'Edge Function car la RLS empêche
+  // le front de lire integration_accounts.
+  const { data, error } =
+    await supabase.functions.invoke(
+      "gmail-status",
+      {
+        body: {
+          user_id: userId,
+        },
+      }
+    );
 
   if (error) {
-    throw new Error(error.message);
+    throw new Error(
+      await readFunctionError(
+        error,
+        "Impossible de récupérer le statut Google."
+      )
+    );
   }
 
-  return data || null;
+  if (data?.success === false) {
+    throw new Error(
+      data.error ||
+        "Impossible de récupérer le statut Google."
+    );
+  }
+
+  return data?.account ?? null;
+}
+
+export async function syncGmail(userId) {
+  if (!userId) {
+    throw new Error(
+      "Impossible d'identifier l'utilisateur connecté."
+    );
+  }
+
+  const { data, error } =
+    await supabase.functions.invoke(
+      "gmail-sync",
+      {
+        body: {
+          user_id: userId,
+        },
+      }
+    );
+
+  if (error) {
+    throw new Error(
+      await readFunctionError(
+        error,
+        "Impossible de synchroniser Gmail."
+      )
+    );
+  }
+
+  if (data?.success === false) {
+    throw new Error(
+      data.error ||
+        "Impossible de synchroniser Gmail."
+    );
+  }
+
+  return data;
 }

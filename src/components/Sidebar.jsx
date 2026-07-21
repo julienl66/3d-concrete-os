@@ -10,6 +10,7 @@ const items = [
   { id: "projets", label: "Projets", icon: "📁" },
   { id: "chiffrage", label: "Chiffrage", icon: "🧮" },
   { id: "crm", label: "CRM", icon: "🤝" },
+  { id: "messagerie", label: "Messagerie", icon: "✉️" },
   { id: "planning", label: "Planning", icon: "📅" },
   { id: "stock", label: "Stock", icon: "📦" },
   { id: "couts", label: "Coûts & marges", icon: "💰" },

@@ -218,6 +218,8 @@ Deno.serve(async (req: Request): Promise<Response> => {
       googleStateSecret,
     );
 
+    console.log("STATE USER ID =", statePayload.user_id);
+
     const tokenResponse = await fetch(
       "https://oauth2.googleapis.com/token",
       {
@@ -310,7 +312,9 @@ Deno.serve(async (req: Request): Promise<Response> => {
       ? tokenData.scope.split(/\s+/).filter(Boolean)
       : [];
 
-    const accountValues = {
+      console.log("INSERT USER ID =", statePayload.user_id);
+    
+      const accountValues = {
       user_id: statePayload.user_id,
       provider: "google",
       external_account_id: googleUser.sub,

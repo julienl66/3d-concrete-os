@@ -45,7 +45,6 @@ export default function CRM({ user, permissions }) {
     product_family: "",
     sector: "",
     lead_source: "",
-    competitor: "",
     priority: "normal",
     project_id: "",
     quote_id: "",
@@ -94,7 +93,6 @@ export default function CRM({ user, permissions }) {
       product_family: selectedContact.product_family || "",
       sector: selectedContact.sector || "",
       lead_source: selectedContact.lead_source || "",
-      competitor: selectedContact.competitor || "",
       priority: selectedContact.priority || "normal",
       project_id: selectedContact.project_id || "",
       quote_id: selectedContact.quote_id || "",
@@ -728,7 +726,6 @@ export default function CRM({ user, permissions }) {
       product_family: opportunityForm.product_family || null,
       sector: opportunityForm.sector || null,
       lead_source: opportunityForm.lead_source || null,
-      competitor: opportunityForm.competitor || null,
       priority: opportunityForm.priority || "normal",
       project_id: opportunityForm.project_id || null,
       quote_id: opportunityForm.quote_id || null,
@@ -824,7 +821,6 @@ export default function CRM({ user, permissions }) {
       product_family: contactForm.product_family || null,
       sector: contactForm.sector || null,
       lead_source: contactForm.lead_source || null,
-      competitor: contactForm.competitor || null,
       priority: contactForm.priority || "normal",
       project_id: contactForm.project_id || null,
       quote_id: contactForm.quote_id || null,
@@ -872,8 +868,7 @@ export default function CRM({ user, permissions }) {
       product_family: "",
       sector: "",
       lead_source: "",
-      competitor: "",
-      priority: "normal",
+        priority: "normal",
       project_id: "",
       quote_id: "",
       notes: "",
@@ -1366,6 +1361,31 @@ export default function CRM({ user, permissions }) {
     return labels[value] || value || "Normale";
   }
 
+  function interactionMeta(type) {
+    const meta = {
+      appel: { icon: "📞", label: "Appel", className: "call" },
+      email: { icon: "✉️", label: "Email", className: "email" },
+      rdv: { icon: "📅", label: "Rendez-vous", className: "meeting" },
+      devis: { icon: "💰", label: "Devis", className: "quote" },
+      relance: { icon: "⏰", label: "Relance", className: "followup" },
+      note: { icon: "📝", label: "Note", className: "note" },
+    };
+
+    return meta[type] || { icon: "•", label: type || "Activité", className: "default" };
+  }
+
+  function formatActivityDate(value) {
+    if (!value) return "Date non renseignée";
+
+    return new Intl.DateTimeFormat("fr-FR", {
+      day: "2-digit",
+      month: "long",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    }).format(new Date(value));
+  }
+
   function stageMetrics(stageContacts) {
     const raw = stageContacts.reduce(
       (sum, contact) => sum + Number(contact.estimated_amount || 0),
@@ -1399,37 +1419,50 @@ export default function CRM({ user, permissions }) {
   }
 
   function contactCard(contact) {
+    const probability = Number(contact.probability_percent || contact.probability || 0);
+
     return (
       <div
-        className="crm-card"
+        className="crm-card crm-card-v2"
         draggable
         onDragStart={() => setDraggedContactId(contact.id)}
         onDragEnd={() => setDraggedContactId(null)}
         onClick={() => setSelectedContact(contact)}
       >
-        <strong>{contact.company_name}</strong>
-        <small>{contact.contact_name || "-"} · {contact.city || "-"}</small>
-        <small>{employeeName(contact.assigned_to)}</small>
-        <div className="crm-pipe-mini">
-          <span>{formatMoney(contact.estimated_amount || 0)}</span>
-          <span>{Number(contact.probability_percent || contact.probability || 0)} %</span>
-          <strong>{formatMoney(weightedPipe(contact))}</strong>
+        <div className="crm-card-v2-head">
+          <div>
+            <strong>{contact.company_name}</strong>
+            <small>{contact.city || "Ville non renseignée"}</small>
+          </div>
+          <span className={`crm-priority-badge ${contact.priority || "normal"}`}>
+            {priorityLabel(contact.priority)}
+          </span>
         </div>
-        <small>{contact.product_family || "Famille non renseignée"} · {priorityLabel(contact.priority)}</small>
+
+        <div className="crm-card-v2-contact">
+          <span>👤</span>
+          <div>
+            <strong>{contact.contact_name || "Contact non renseigné"}</strong>
+            <small>{employeeName(contact.assigned_to)}</small>
+          </div>
+        </div>
+
+        <div className="crm-card-v2-kpis">
+          <div><small>Montant</small><strong>{formatMoney(contact.estimated_amount || 0)}</strong></div>
+          <div><small>Probabilité</small><strong>{probability} %</strong></div>
+          <div><small>Pondéré</small><strong>{formatMoney(weightedPipe(contact))}</strong></div>
+        </div>
+
+        <div className="crm-card-v2-meta">
+          <span>{contact.product_family || "Famille non renseignée"}</span>
+          <span>{contact.expected_signature_month || "Signature non planifiée"}</span>
+        </div>
 
         <div className="crm-card-actions">
-          <button className="btn small" onClick={(e) => { e.stopPropagation(); openPhone(contact); }}>
-            Appeler
-          </button>
-          <button className="btn small" onClick={(e) => { e.stopPropagation(); openEmail(contact); }}>
-            Email
-          </button>
-          <button className="btn small" onClick={(e) => { e.stopPropagation(); editContact(contact); }}>
-            Modifier
-          </button>
-          <button className="btn small danger-soft" onClick={(e) => { e.stopPropagation(); deleteContact(contact); }}>
-            Supprimer
-          </button>
+          <button className="btn small" onClick={(e) => { e.stopPropagation(); openPhone(contact); }}>Appeler</button>
+          <button className="btn small" onClick={(e) => { e.stopPropagation(); openEmail(contact); }}>Email</button>
+          <button className="btn small" onClick={(e) => { e.stopPropagation(); editContact(contact); }}>Modifier</button>
+          <button className="btn small danger-soft" onClick={(e) => { e.stopPropagation(); deleteContact(contact); }}>Supprimer</button>
         </div>
       </div>
     );
@@ -1781,11 +1814,6 @@ export default function CRM({ user, permissions }) {
           </div>
 
           <div>
-            <label>Concurrent</label>
-            <input value={contactForm.competitor} onChange={(e) => setContactForm({ ...contactForm, competitor: e.target.value })} />
-          </div>
-
-          <div>
             <label>Priorité</label>
             <select value={contactForm.priority} onChange={(e) => setContactForm({ ...contactForm, priority: e.target.value })}>
               <option value="low">Basse</option>
@@ -2115,10 +2143,6 @@ export default function CRM({ user, permissions }) {
                     <input value={opportunityForm.lead_source} onChange={(e) => updateOpportunityForm("lead_source", e.target.value)} />
                   </div>
 
-                  <div>
-                    <label>Concurrent</label>
-                    <input value={opportunityForm.competitor} onChange={(e) => updateOpportunityForm("competitor", e.target.value)} />
-                  </div>
                 </div>
               </section>
 
@@ -2231,20 +2255,30 @@ export default function CRM({ user, permissions }) {
                   <p>Aucune activité enregistrée.</p>
                 ) : (
                   contactInteractions(selectedContact.id).map((interaction) => (
-                    <div className="crm-timeline-item" key={interaction.id}>
-                      <span>{interaction.interaction_type}</span>
-                      <strong>{interaction.subject || interaction.next_action || "-"}</strong>
-                      <small>
-                        {interaction.next_action ? `Action : ${interaction.next_action}` : ""}
-                        {interaction.next_action_date ? ` · ${interaction.next_action_date}` : ""}
-                        {interaction.meeting_time ? ` · ${interaction.meeting_time}` : ""}
-                        {interaction.meeting_location ? ` · ${interaction.meeting_location}` : ""}
-                        {interaction.done ? " · traité" : ""}
-                      </small>
-                      {interaction.call_duration_seconds ? (
-                        <small>Durée appel : {Math.floor(interaction.call_duration_seconds / 60)} min {interaction.call_duration_seconds % 60} s · statut : {interaction.call_status || "-"}</small>
-                      ) : null}
-                      {interaction.notes && <p>{interaction.notes}</p>}
+                    <div className={`crm-timeline-item crm-timeline-${interactionMeta(interaction.interaction_type).className}`} key={interaction.id}>
+                      <div className="crm-timeline-icon" aria-hidden="true">
+                        {interactionMeta(interaction.interaction_type).icon}
+                      </div>
+                      <div className="crm-timeline-content">
+                        <div className="crm-timeline-headline">
+                          <span>{interactionMeta(interaction.interaction_type).label}</span>
+                          <time>{formatActivityDate(interaction.created_at || interaction.interaction_date)}</time>
+                        </div>
+                        <strong>{interaction.subject || interaction.next_action || "Activité sans titre"}</strong>
+                        {(interaction.next_action || interaction.next_action_date || interaction.meeting_time || interaction.meeting_location) && (
+                          <small>
+                            {interaction.next_action ? `Action : ${interaction.next_action}` : ""}
+                            {interaction.next_action_date ? ` · échéance ${interaction.next_action_date}` : ""}
+                            {interaction.meeting_time ? ` · ${interaction.meeting_time}` : ""}
+                            {interaction.meeting_location ? ` · ${interaction.meeting_location}` : ""}
+                          </small>
+                        )}
+                        {interaction.call_duration_seconds ? (
+                          <small>Durée : {Math.floor(interaction.call_duration_seconds / 60)} min {interaction.call_duration_seconds % 60} s · statut : {interaction.call_status || "-"}</small>
+                        ) : null}
+                        {interaction.notes && <p>{interaction.notes}</p>}
+                        {interaction.done && <span className="crm-timeline-done">Traité</span>}
+                      </div>
                     </div>
                   ))
                 )}

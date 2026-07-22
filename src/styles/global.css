@@ -9415,3 +9415,143 @@ textarea:focus {
 .bi-monthly-table-card { margin-top: 18px; }
 .bi-project-names { margin-top: 5px; color: var(--muted); font-size: 12px; }
 .bi-monthly-table-card tfoot th { border-top: 2px solid var(--line); }
+
+/* CRM Sprint 1 — cartes et timeline */
+.crm-card-v2 {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease;
+}
+
+.crm-card-v2:hover {
+  transform: translateY(-2px);
+  border-color: #cbd5e1;
+  box-shadow: 0 14px 30px rgba(15, 23, 42, 0.09);
+}
+
+.crm-card-v2-head,
+.crm-card-v2-contact,
+.crm-card-v2-meta,
+.crm-timeline-headline {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.crm-card-v2-head > div,
+.crm-card-v2-contact > div {
+  min-width: 0;
+}
+
+.crm-card-v2-head > div > strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.crm-priority-badge {
+  flex: 0 0 auto;
+  border-radius: 999px;
+  padding: 4px 8px;
+  background: #f1f5f9;
+  color: #475569;
+  font-size: 10px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.crm-priority-badge.high { background: #fff7ed; color: #c2410c; }
+.crm-priority-badge.critical { background: #fef2f2; color: #b91c1c; }
+.crm-priority-badge.low { background: #eff6ff; color: #1d4ed8; }
+
+.crm-card-v2-contact {
+  justify-content: flex-start;
+  padding: 10px;
+  border-radius: 12px;
+  background: #f8fafc;
+}
+
+.crm-card-v2-contact > span { font-size: 18px; }
+
+.crm-card-v2-kpis {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.crm-card-v2-kpis > div {
+  min-width: 0;
+  padding: 9px 7px;
+  border: 1px solid #e2e8f0;
+  border-radius: 11px;
+  background: #fff;
+}
+
+.crm-card-v2-kpis small,
+.crm-card-v2-kpis strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.crm-card-v2-kpis small { margin: 0 0 3px; font-size: 10px; }
+.crm-card-v2-kpis strong { font-size: 12px; }
+
+.crm-card-v2-meta {
+  align-items: flex-start;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.crm-card-v2-meta span:last-child { text-align: right; }
+
+.crm-timeline-item {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  gap: 12px;
+  padding: 16px;
+  border-left: 4px solid #94a3b8;
+}
+
+.crm-timeline-item::before { display: none; }
+
+.crm-timeline-icon {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  border-radius: 13px;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  font-size: 19px;
+}
+
+.crm-timeline-content { min-width: 0; }
+.crm-timeline-headline { margin-bottom: 5px; }
+.crm-timeline-headline span { color: #334155; }
+.crm-timeline-headline time { color: #94a3b8; font-size: 11px; font-weight: 800; }
+.crm-timeline-content p { margin: 9px 0 0; color: #475569; line-height: 1.5; }
+.crm-timeline-done {
+  display: inline-flex !important;
+  margin-top: 9px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: #ecfdf5;
+  color: #047857 !important;
+  font-size: 10px !important;
+}
+
+.crm-timeline-call { border-left-color: #2563eb; }
+.crm-timeline-email { border-left-color: #7c3aed; }
+.crm-timeline-meeting { border-left-color: #0891b2; }
+.crm-timeline-quote { border-left-color: #16a34a; }
+.crm-timeline-followup { border-left-color: #ea580c; }
+.crm-timeline-note { border-left-color: #64748b; }
+
+@media (max-width: 700px) {
+  .crm-card-v2-kpis { grid-template-columns: 1fr; }
+  .crm-timeline-headline { align-items: flex-start; flex-direction: column; }
+}

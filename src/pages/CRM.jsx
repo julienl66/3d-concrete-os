@@ -6,7 +6,16 @@ import AlloCallHistory from "../components/AlloCallHistory.jsx";
 import CrmEmailPanel from "../components/CrmEmailPanel.jsx";
 import { openAlloCall } from "../services/allo.js";
 
-const INTERACTION_TYPES = ["note", "appel", "email", "rdv", "devis", "relance"];
+const INTERACTION_TYPES = ["note", "appel", "email", "rdv", "compte_rendu", "relance", "tache"];
+const CLIENT_CATEGORIES = [
+  "Commune", "Communauté de communes", "Département", "Région", "Architecte",
+  "Paysagiste", "Promoteur", "Entreprise", "Industrie", "Particulier", "Autre",
+];
+const QUALIFICATIONS = [
+  ["hot", "🔴 Chaud"],
+  ["warm", "🟠 Tiède"],
+  ["cold", "🔵 Froid"],
+];
 
 export default function CRM({ user, permissions }) {
   const [stages, setStages] = useState([]);
@@ -29,6 +38,8 @@ export default function CRM({ user, permissions }) {
     min_probability: "",
   });
   const [activeCall, setActiveCall] = useState(null);
+  const [clientTab, setClientTab] = useState("overview");
+  const [stageHistory, setStageHistory] = useState([]);
 
   const [contactForm, setContactForm] = useState({
     company_name: "",
@@ -45,7 +56,8 @@ export default function CRM({ user, permissions }) {
     product_family: "",
     sector: "",
     lead_source: "",
-    competitor: "",
+    client_category: "Commune",
+    qualification: "cold",
     priority: "normal",
     project_id: "",
     quote_id: "",
@@ -73,6 +85,7 @@ export default function CRM({ user, permissions }) {
   }, []);
 
   useEffect(() => {
+    setClientTab("overview");
     if (!selectedContact) {
       setOpportunityForm(null);
       return;
@@ -94,7 +107,8 @@ export default function CRM({ user, permissions }) {
       product_family: selectedContact.product_family || "",
       sector: selectedContact.sector || "",
       lead_source: selectedContact.lead_source || "",
-      competitor: selectedContact.competitor || "",
+      client_category: selectedContact.client_category || "Commune",
+      qualification: selectedContact.qualification || "cold",
       priority: selectedContact.priority || "normal",
       project_id: selectedContact.project_id || "",
       quote_id: selectedContact.quote_id || "",
@@ -111,6 +125,7 @@ export default function CRM({ user, permissions }) {
       interactionsResponse,
       projectsResponse,
       quotesResponse,
+      stageHistoryResponse,
     ] = await Promise.all([
       supabase
         .from("crm_pipeline_stages")
@@ -139,6 +154,10 @@ export default function CRM({ user, permissions }) {
         .from("quote_estimations")
         .select("*")
         .order("created_at", { ascending: false }),
+      supabase
+        .from("crm_stage_history")
+        .select("*")
+        .order("changed_at", { ascending: false }),
     ]);
 
     const error =
@@ -147,7 +166,8 @@ export default function CRM({ user, permissions }) {
       employeesResponse.error ||
       interactionsResponse.error ||
       projectsResponse.error ||
-      quotesResponse.error;
+      quotesResponse.error ||
+      stageHistoryResponse.error;
 
     if (error) {
       setMessage(error.message);
@@ -160,6 +180,7 @@ export default function CRM({ user, permissions }) {
     setInteractions(interactionsResponse.data || []);
     setProjects(projectsResponse.data || []);
     setQuotes(quotesResponse.data || []);
+    setStageHistory(stageHistoryResponse.data || []);
   }
 
   function can(action) {
@@ -728,7 +749,8 @@ export default function CRM({ user, permissions }) {
       product_family: opportunityForm.product_family || null,
       sector: opportunityForm.sector || null,
       lead_source: opportunityForm.lead_source || null,
-      competitor: opportunityForm.competitor || null,
+      client_category: opportunityForm.client_category || "Autre",
+      qualification: opportunityForm.qualification || "cold",
       priority: opportunityForm.priority || "normal",
       project_id: opportunityForm.project_id || null,
       quote_id: opportunityForm.quote_id || null,
@@ -765,8 +787,13 @@ export default function CRM({ user, permissions }) {
       user,
     });
 
+    await recordStageChange(selectedContact.id, selectedContact.stage_id || null, payload.stage_id || null);
     setSelectedContact(data);
     setMessage("Opportunité mise à jour.");
+    if (isValidatedQuoteStage(payload.stage_id) && !data.project_id) {
+      const createNow = window.confirm("Devis validé. Créer un projet à partir de cette opportunité ?");
+      if (createNow) await createProjectFromOpportunity(data);
+    }
     await loadData();
   }
 
@@ -824,7 +851,8 @@ export default function CRM({ user, permissions }) {
       product_family: contactForm.product_family || null,
       sector: contactForm.sector || null,
       lead_source: contactForm.lead_source || null,
-      competitor: contactForm.competitor || null,
+      client_category: contactForm.client_category || "Autre",
+      qualification: contactForm.qualification || "cold",
       priority: contactForm.priority || "normal",
       project_id: contactForm.project_id || null,
       quote_id: contactForm.quote_id || null,
@@ -872,7 +900,8 @@ export default function CRM({ user, permissions }) {
       product_family: "",
       sector: "",
       lead_source: "",
-      competitor: "",
+      client_category: "Commune",
+      qualification: "cold",
       priority: "normal",
       project_id: "",
       quote_id: "",
@@ -881,6 +910,20 @@ export default function CRM({ user, permissions }) {
 
     setMessage("Contact CRM ajouté.");
     await loadData();
+  }
+
+  async function recordStageChange(contactId, fromStageId, toStageId) {
+    if (fromStageId === toStageId) return;
+    await supabase.from("crm_stage_history").insert({
+      contact_id: contactId,
+      from_stage_id: fromStageId || null,
+      to_stage_id: toStageId || null,
+      changed_by: user?.id || null,
+    });
+  }
+
+  function isValidatedQuoteStage(stageId) {
+    return stageName(stageId).toLowerCase().includes("devis validé");
   }
 
   async function updateContactStage(contactId, stageId) {
@@ -911,6 +954,7 @@ export default function CRM({ user, permissions }) {
 
     const contact = contacts.find((item) => item.id === contactId);
     const stage = stages.find((item) => item.id === stageId);
+    await recordStageChange(contactId, contact?.stage_id || null, stageId || null);
 
     await emitEvent({
       event_type: "CRM_STAGE_CHANGED",
@@ -1089,6 +1133,37 @@ export default function CRM({ user, permissions }) {
     });
 
     setMessage("Interaction ajoutée.");
+    await loadData();
+  }
+
+  async function editInteraction(interaction) {
+    if (!can("can_edit")) return setMessage("Action non autorisée.");
+    const subject = window.prompt("Sujet", interaction.subject || "");
+    if (subject === null) return;
+    const notes = window.prompt("Notes / compte rendu", interaction.notes || "");
+    if (notes === null) return;
+    const nextAction = window.prompt("Action suivante", interaction.next_action || "");
+    if (nextAction === null) return;
+    const nextDate = window.prompt("Date (AAAA-MM-JJ)", interaction.next_action_date || "");
+    if (nextDate === null) return;
+    const { error } = await supabase.from("crm_interactions").update({
+      subject: subject || null,
+      notes: notes || null,
+      next_action: nextAction || null,
+      next_action_date: nextDate || null,
+      updated_at: new Date().toISOString(),
+    }).eq("id", interaction.id);
+    if (error) return setMessage(error.message);
+    setMessage("Activité modifiée.");
+    await loadData();
+  }
+
+  async function deleteInteraction(interaction) {
+    if (!can("can_delete")) return setMessage("Action non autorisée.");
+    if (!window.confirm("Supprimer cette activité ?")) return;
+    const { error } = await supabase.from("crm_interactions").delete().eq("id", interaction.id);
+    if (error) return setMessage(error.message);
+    setMessage("Activité supprimée.");
     await loadData();
   }
 
@@ -1781,8 +1856,17 @@ export default function CRM({ user, permissions }) {
           </div>
 
           <div>
-            <label>Concurrent</label>
-            <input value={contactForm.competitor} onChange={(e) => setContactForm({ ...contactForm, competitor: e.target.value })} />
+            <label>Catégorie de client</label>
+            <select value={contactForm.client_category} onChange={(e) => setContactForm({ ...contactForm, client_category: e.target.value })}>
+              {CLIENT_CATEGORIES.map((category) => <option key={category} value={category}>{category}</option>)}
+            </select>
+          </div>
+
+          <div>
+            <label>Qualification</label>
+            <select value={contactForm.qualification} onChange={(e) => setContactForm({ ...contactForm, qualification: e.target.value })}>
+              {QUALIFICATIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+            </select>
           </div>
 
           <div>
@@ -1962,7 +2046,7 @@ export default function CRM({ user, permissions }) {
 
       {selectedContact && opportunityForm && (
         <div className="crm-drawer-backdrop" onClick={() => setSelectedContact(null)}>
-          <aside className="crm-drawer" onClick={(e) => e.stopPropagation()}>
+          <aside className="crm-drawer crm-drawer-fullscreen" onClick={(e) => e.stopPropagation()}>
             <div className="crm-drawer-head">
               <div>
                 <p className="eyebrow">Fiche client complète</p>
@@ -2013,8 +2097,19 @@ export default function CRM({ user, permissions }) {
                 Créer projet
               </button>
             </div>
+            <nav className="crm-client-tabs">
+              {[
+                ["overview", "Vue d’ensemble"],
+                ["activities", "Activités"],
+                ["emails", "Emails"],
+                ["documents", "Documents & projets"],
+                ["pipeline", "Historique commercial"],
+              ].map(([id, label]) => (
+                <button key={id} type="button" className={clientTab === id ? "active" : ""} onClick={() => setClientTab(id)}>{label}</button>
+              ))}
+            </nav>
 
-            <form className="crm-drawer-form" onSubmit={saveOpportunity}>
+            {clientTab === "overview" && <form className="crm-drawer-form" onSubmit={saveOpportunity}>
               <section>
                 <h4>Informations</h4>
 
@@ -2116,8 +2211,16 @@ export default function CRM({ user, permissions }) {
                   </div>
 
                   <div>
-                    <label>Concurrent</label>
-                    <input value={opportunityForm.competitor} onChange={(e) => updateOpportunityForm("competitor", e.target.value)} />
+                    <label>Catégorie de client</label>
+                    <select value={opportunityForm.client_category} onChange={(e) => updateOpportunityForm("client_category", e.target.value)}>
+                      {CLIENT_CATEGORIES.map((category) => <option key={category} value={category}>{category}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label>Qualification</label>
+                    <select value={opportunityForm.qualification} onChange={(e) => updateOpportunityForm("qualification", e.target.value)}>
+                      {QUALIFICATIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                    </select>
                   </div>
                 </div>
               </section>
@@ -2165,10 +2268,10 @@ export default function CRM({ user, permissions }) {
               <div className="crm-drawer-save">
                 <button className="btn primary">Enregistrer la fiche</button>
               </div>
-            </form>
+            </form>}
 
-            <div className="crm-drawer-section">
-              <h4>Ajouter une activité</h4>
+            {clientTab === "activities" && <div className="crm-drawer-section">
+              <h4>Activités client</h4>
 
               <form className="crm-interaction-form crm-interaction-form-extended" onSubmit={createInteraction}>
                 <div>
@@ -2207,23 +2310,54 @@ export default function CRM({ user, permissions }) {
 
                 <button className="btn primary">Ajouter activité</button>
               </form>
-            </div>
+              <div className="crm-activity-list">
+                {contactInteractions(selectedContact.id).map((interaction) => (
+                  <article key={interaction.id} className="crm-activity-card">
+                    <div><span>{interaction.interaction_type}</span><strong>{interaction.subject || interaction.next_action || "Activité"}</strong></div>
+                    <p>{interaction.notes || ""}</p>
+                    <small>{interaction.next_action_date || interaction.created_at?.slice(0, 10) || ""}{interaction.next_action ? ` · ${interaction.next_action}` : ""}</small>
+                    <div className="inline-actions">
+                      <button type="button" className="btn small" onClick={() => editInteraction(interaction)}>Modifier</button>
+                      <button type="button" className="btn small danger-soft" onClick={() => deleteInteraction(interaction)}>Supprimer</button>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            </div>}
 
-            <div className="crm-drawer-section">
+            {clientTab === "emails" && <div className="crm-drawer-section">
               <CrmEmailPanel
                 contact={selectedContact}
                 user={user}
                 onActivityCreated={loadData}
               />
-            </div>
+            </div>}
 
-            <div className="crm-drawer-section">
+            {clientTab === "activities" && <div className="crm-drawer-section">
               <h4>Historique Allo</h4>
 
               <AlloCallHistory contact={selectedContact} />
-            </div>
+            </div>}
 
-            <div className="crm-drawer-section">
+            {clientTab === "documents" && <div className="crm-drawer-section">
+              <h4>Documents, devis et projets associés</h4>
+              <div className="crm-linked-grid">
+                <div><strong>Projets</strong>{contactProjects(selectedContact.id).length ? contactProjects(selectedContact.id).map((project) => <p key={project.id}>{project.project_code || ""} {project.name} · {project.status || ""}</p>) : <p>Aucun projet associé.</p>}</div>
+                <div><strong>Devis / chiffrages</strong>{contactQuotes(selectedContact.id).length ? contactQuotes(selectedContact.id).map((quote) => <p key={quote.id}>{quote.reference || quote.title || quote.name || "Chiffrage"}</p>) : <p>Aucun devis associé.</p>}</div>
+              </div>
+            </div>}
+
+            {clientTab === "pipeline" && <div className="crm-drawer-section">
+              <h4>Historique commercial</h4>
+              <div className="crm-stage-history">
+                {stageHistory.filter((row) => row.contact_id === selectedContact.id).map((row) => (
+                  <div key={row.id}><strong>{stageName(row.from_stage_id)} → {stageName(row.to_stage_id)}</strong><small>{new Date(row.changed_at).toLocaleString("fr-FR")}</small></div>
+                ))}
+                {stageHistory.filter((row) => row.contact_id === selectedContact.id).length === 0 && <p>Aucun changement d’étape enregistré.</p>}
+              </div>
+            </div>}
+
+            {clientTab === "pipeline" && <div className="crm-drawer-section">
               <h4>Timeline commerciale</h4>
 
               <div className="crm-timeline">
@@ -2249,7 +2383,7 @@ export default function CRM({ user, permissions }) {
                   ))
                 )}
               </div>
-            </div>
+            </div>}
           </aside>
         </div>
       )}

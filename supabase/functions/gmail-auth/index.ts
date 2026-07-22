@@ -91,7 +91,9 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
   if (req.method !== "POST") {
     return jsonResponse(
-      { error: "Method not allowed" },
+      {
+        error: "Method not allowed",
+      },
       405,
     );
   }
@@ -183,16 +185,40 @@ Deno.serve(async (req: Request): Promise<Response> => {
       "offline",
     );
 
+    /*
+     * Force l’écran de consentement Google.
+     * Cela permet d’obtenir un nouveau refresh_token
+     * et d’accepter les nouvelles autorisations Gmail.
+     */
     authorizationUrl.searchParams.set(
       "prompt",
       "consent",
     );
 
+    /*
+     * Conserve les autorisations déjà accordées
+     * et ajoute les nouvelles autorisations demandées.
+     */
     authorizationUrl.searchParams.set(
       "include_granted_scopes",
       "true",
     );
 
+    /*
+     * Autorisations demandées :
+     *
+     * - openid, email, profile :
+     *   identification du compte Google connecté.
+     *
+     * - gmail.readonly :
+     *   lecture des messages et des conversations.
+     *
+     * - gmail.send :
+     *   envoi d’e-mails depuis l’ERP.
+     *
+     * - gmail.modify :
+     *   gestion des messages et libellés Gmail.
+     */
     authorizationUrl.searchParams.set(
       "scope",
       [
@@ -200,6 +226,8 @@ Deno.serve(async (req: Request): Promise<Response> => {
         "email",
         "profile",
         "https://www.googleapis.com/auth/gmail.readonly",
+        "https://www.googleapis.com/auth/gmail.send",
+        "https://www.googleapis.com/auth/gmail.modify",
       ].join(" "),
     );
 

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   getGmailThread,
   listGmailThreads,
@@ -85,6 +85,7 @@ export default function Messagerie({ user }) {
   const [message, setMessage] = useState("");
   const [composeMode, setComposeMode] = useState(null);
   const [sending, setSending] = useState(false);
+  const syncInProgressRef = useRef(false);
 
   const selectedThread = useMemo(
     () => threads.find((item) => item.id === selectedId) || conversation?.thread || null,
@@ -111,7 +112,29 @@ export default function Messagerie({ user }) {
   useEffect(() => {
     const timer = window.setTimeout(() => loadThreads(), 250);
     return () => window.clearTimeout(timer);
-  }, [folder, search]);
+  }, [folder, search, loadThreads]);
+
+  /*
+   * Synchronisation automatique :
+   * - immédiatement à l'ouverture de la messagerie ;
+   * - ensuite toutes les 60 secondes tant que la page reste ouverte.
+   */
+  useEffect(() => {
+    if (!userId) return undefined;
+
+    const firstSyncTimer = window.setTimeout(() => {
+      synchronize({ silent: true });
+    }, 300);
+
+    const interval = window.setInterval(() => {
+      synchronize({ silent: true });
+    }, 60_000);
+
+    return () => {
+      window.clearTimeout(firstSyncTimer);
+      window.clearInterval(interval);
+    };
+  }, [userId, synchronize]);
 
   useEffect(() => {
     if (!selectedId || !userId) return;
@@ -133,19 +156,38 @@ export default function Messagerie({ user }) {
     return () => { cancelled = true; };
   }, [selectedId, userId]);
 
-  async function synchronize() {
+  const synchronize = useCallback(async ({ silent = false } = {}) => {
+    if (!userId || syncInProgressRef.current) return;
+
+    syncInProgressRef.current = true;
     setSyncing(true);
-    setMessage("");
+
+    if (!silent) {
+      setMessage("");
+    }
+
     try {
       const result = await refreshGmail(userId);
-      setMessage(`${result?.threads_synced ?? 0} conversation(s) et ${result?.messages_synced ?? 0} message(s) synchronisés.`);
+
+      if (!silent) {
+        setMessage(
+          `${result?.threads_synced ?? 0} conversation(s) et ` +
+          `${result?.messages_synced ?? 0} message(s) synchronisés.`
+        );
+      }
+
       await loadThreads(selectedId);
     } catch (error) {
-      setMessage(error.message);
+      setMessage(
+        error instanceof Error
+          ? error.message
+          : "La synchronisation Gmail a échoué."
+      );
     } finally {
+      syncInProgressRef.current = false;
       setSyncing(false);
     }
-  }
+  }, [userId, loadThreads, selectedId]);
 
   async function submitCompose(form) {
     setSending(true);
@@ -212,7 +254,7 @@ export default function Messagerie({ user }) {
         </div>
         <div className="actions mail-head-actions">
           <button className="btn primary" onClick={() => setComposeMode("new")}>＋ Nouveau message</button>
-          <button className="btn ghost" onClick={synchronize} disabled={syncing}>{syncing ? "Synchronisation…" : "↻ Synchroniser"}</button>
+          <button className="btn ghost" onClick={() => synchronize()} disabled={syncing}>{syncing ? "Synchronisation…" : "↻ Synchroniser"}</button>
         </div>
       </div>
 

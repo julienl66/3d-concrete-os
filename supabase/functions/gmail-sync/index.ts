@@ -549,6 +549,35 @@ Deno.serve(async (req: Request): Promise<Response> => {
       ? "initial"
       : "incremental";
 
+    /*
+     * Toujours contrôler les conversations les plus récentes.
+     *
+     * Sans ce contrôle, tant que l'import initial n'est pas terminé,
+     * chaque synchronisation poursuit uniquement les anciennes pages
+     * Gmail via cursor_value. Les nouveaux messages peuvent donc ne
+     * jamais apparaître dans l'ERP pendant cette phase.
+     */
+    const recentParams = new URLSearchParams({
+      maxResults: "25",
+    });
+
+    const recentThreads =
+      await googleFetch<GmailThreadListResponse>(
+        `https://gmail.googleapis.com/gmail/v1/users/me/threads?${recentParams.toString()}`,
+        accessToken,
+      );
+
+    for (const thread of recentThreads.threads ?? []) {
+      if (thread.id) {
+        threadIds.add(thread.id);
+      }
+
+      latestHistoryId = maxHistoryId(
+        latestHistoryId,
+        thread.historyId,
+      );
+    }
+
     if (mode === "initial") {
       let pageToken = syncState.cursor_value;
 

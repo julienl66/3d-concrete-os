@@ -15,6 +15,7 @@ export default function CRM({ user, permissions }) {
   const [interactions, setInteractions] = useState([]);
   const [projects, setProjects] = useState([]);
   const [quotes, setQuotes] = useState([]);
+  const [projectDocuments, setProjectDocuments] = useState([]);
   const [selectedContact, setSelectedContact] = useState(null);
   const [opportunityForm, setOpportunityForm] = useState(null);
   const [draggedContactId, setDraggedContactId] = useState(null);
@@ -109,6 +110,7 @@ export default function CRM({ user, permissions }) {
       interactionsResponse,
       projectsResponse,
       quotesResponse,
+      documentsResponse,
     ] = await Promise.all([
       supabase
         .from("crm_pipeline_stages")
@@ -137,6 +139,10 @@ export default function CRM({ user, permissions }) {
         .from("quote_estimations")
         .select("*")
         .order("created_at", { ascending: false }),
+      supabase
+        .from("project_documents")
+        .select("*")
+        .order("created_at", { ascending: false }),
     ]);
 
     const error =
@@ -145,7 +151,8 @@ export default function CRM({ user, permissions }) {
       employeesResponse.error ||
       interactionsResponse.error ||
       projectsResponse.error ||
-      quotesResponse.error;
+      quotesResponse.error ||
+      documentsResponse.error;
 
     if (error) {
       setMessage(error.message);
@@ -158,6 +165,7 @@ export default function CRM({ user, permissions }) {
     setInteractions(interactionsResponse.data || []);
     setProjects(projectsResponse.data || []);
     setQuotes(quotesResponse.data || []);
+    setProjectDocuments(documentsResponse.data || []);
   }
 
   function can(action) {
@@ -1418,12 +1426,88 @@ export default function CRM({ user, permissions }) {
     };
   }
 
+
+  function qualificationMeta(contact) {
+    const probability = Number(contact?.probability_percent || contact?.probability || 0);
+    const score = opportunityScore(contact);
+
+    if (probability >= 70 || score >= 80) {
+      return { label: "Chaud", icon: "🔥", className: "hot" };
+    }
+
+    if (probability >= 40 || score >= 50) {
+      return { label: "Tiède", icon: "🟠", className: "warm" };
+    }
+
+    return { label: "Froid", icon: "🔵", className: "cold" };
+  }
+
+  function clientCategory(contact) {
+    const source = `${contact?.sector || ""} ${contact?.contact_type || ""} ${contact?.company_name || ""}`.toLowerCase();
+    const categories = [
+      ["communauté", "Communauté de communes"],
+      ["commune", "Commune"],
+      ["mairie", "Commune"],
+      ["ville", "Commune"],
+      ["office de tourisme", "Office de tourisme"],
+      ["architect", "Architecte"],
+      ["promoteur", "Promoteur"],
+      ["industrie", "Industrie"],
+      ["association", "Association"],
+      ["particulier", "Particulier"],
+      ["département", "Département"],
+      ["region", "Région"],
+      ["région", "Région"],
+    ];
+    return categories.find(([needle]) => source.includes(needle))?.[1] || contact?.sector || "Entreprise / autre";
+  }
+
+  function relativeActivityLabel(contactId) {
+    const days = daysSinceLastActivity(contactId);
+    if (days === 999) return "Aucune activité";
+    if (days <= 0) return "Aujourd’hui";
+    if (days === 1) return "Hier";
+    return `Il y a ${days} jours`;
+  }
+
+  function projectStatusLabel(status) {
+    const labels = {
+      validated: "Validé",
+      production: "En production",
+      ready: "Prêt",
+      installed: "Posé",
+      archived: "Archivé",
+      pending: "À valider",
+    };
+    return labels[status] || status || "Non renseigné";
+  }
+
+  function projectDocumentsForContact(contactId) {
+    const ids = new Set(contactProjects(contactId).map((project) => project.id));
+    return projectDocuments.filter((document) => ids.has(document.project_id));
+  }
+
+  function processSteps(contact) {
+    const hasMeeting = contactInteractions(contact.id).some((item) => item.interaction_type === "rdv");
+    const hasQuote = contactQuotes(contact.id).length > 0 || contactInteractions(contact.id).some((item) => item.interaction_type === "devis");
+    const hasProject = contactProjects(contact.id).length > 0 || Boolean(contact.project_id);
+    return [
+      { label: "Lead", done: true },
+      { label: "Qualifié", done: Number(contact.probability_percent || contact.probability || 0) >= 30 },
+      { label: "RDV", done: hasMeeting },
+      { label: "Devis", done: hasQuote },
+      { label: "Projet", done: hasProject },
+      { label: "Signé", done: isWonStage(contact.stage_id) || contactProjects(contact.id).some((project) => project.signed_date) },
+    ];
+  }
+
   function contactCard(contact) {
     const probability = Number(contact.probability_percent || contact.probability || 0);
+    const qualification = qualificationMeta(contact);
 
     return (
       <div
-        className="crm-card crm-card-v2"
+        className="crm-card crm-card-v2 crm-card-360"
         draggable
         onDragStart={() => setDraggedContactId(contact.id)}
         onDragEnd={() => setDraggedContactId(null)}
@@ -1434,8 +1518,8 @@ export default function CRM({ user, permissions }) {
             <strong>{contact.company_name}</strong>
             <small>{contact.city || "Ville non renseignée"}</small>
           </div>
-          <span className={`crm-priority-badge ${contact.priority || "normal"}`}>
-            {priorityLabel(contact.priority)}
+          <span className={`crm-qualification-badge ${qualification.className}`}>
+            {qualification.icon} {qualification.label}
           </span>
         </div>
 
@@ -1443,7 +1527,7 @@ export default function CRM({ user, permissions }) {
           <span>👤</span>
           <div>
             <strong>{contact.contact_name || "Contact non renseigné"}</strong>
-            <small>{employeeName(contact.assigned_to)}</small>
+            <small>{employeeName(contact.assigned_to)} · {clientCategory(contact)}</small>
           </div>
         </div>
 
@@ -1454,8 +1538,13 @@ export default function CRM({ user, permissions }) {
         </div>
 
         <div className="crm-card-v2-meta">
+          <span>📅 {contact.expected_signature_month || "Non planifiée"}</span>
+          <span>🕒 {relativeActivityLabel(contact.id)}</span>
+        </div>
+
+        <div className="crm-card-v2-footer">
           <span>{contact.product_family || "Famille non renseignée"}</span>
-          <span>{contact.expected_signature_month || "Signature non planifiée"}</span>
+          <span className={`crm-priority-badge ${contact.priority || "normal"}`}>{priorityLabel(contact.priority)}</span>
         </div>
 
         <div className="crm-card-actions">
@@ -2001,6 +2090,29 @@ export default function CRM({ user, permissions }) {
               <button className="btn small" onClick={() => setSelectedContact(null)}>← Retour au CRM</button>
             </div>
 
+            <div className="crm-360-identity">
+              <div className="crm-360-tags">
+                <span className={`crm-qualification-badge ${qualificationMeta(selectedContact).className}`}>
+                  {qualificationMeta(selectedContact).icon} {qualificationMeta(selectedContact).label}
+                </span>
+                <span className="crm-category-badge">{clientCategory(selectedContact)}</span>
+                <span className={`crm-priority-badge ${selectedContact.priority || "normal"}`}>{priorityLabel(selectedContact.priority)}</span>
+              </div>
+              <div className="crm-360-owner">
+                <span>Commercial</span>
+                <strong>{employeeName(selectedContact.assigned_to)}</strong>
+              </div>
+            </div>
+
+            <div className="crm-process-track">
+              {processSteps(selectedContact).map((step, index) => (
+                <div className={step.done ? "done" : ""} key={step.label}>
+                  <span>{step.done ? "✓" : index + 1}</span>
+                  <strong>{step.label}</strong>
+                </div>
+              ))}
+            </div>
+
             <div className="crm-drawer-score">
               <div>
                 <span>Score opportunité</span>
@@ -2147,6 +2259,51 @@ export default function CRM({ user, permissions }) {
               </section>
 
               <section>
+                <div className="crm-section-title">
+                  <div>
+                    <h4>Vue ERP 360°</h4>
+                    <p>Projets, chiffrages et documents liés à ce client.</p>
+                  </div>
+                </div>
+
+                <div className="crm-erp-overview">
+                  <div className="crm-erp-panel">
+                    <div className="crm-erp-panel-head"><strong>🏗 Projets</strong><span>{contactProjects(selectedContact.id).length}</span></div>
+                    {contactProjects(selectedContact.id).length === 0 ? <p>Aucun projet lié.</p> : contactProjects(selectedContact.id).map((project) => (
+                      <div className="crm-erp-row" key={project.id}>
+                        <div>
+                          <strong>{project.project_code || project.name}</strong>
+                          <small>{project.name} · {projectStatusLabel(project.status)}</small>
+                        </div>
+                        <span>{formatMoney(project.sale_amount || 0)}</span>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="crm-erp-panel">
+                    <div className="crm-erp-panel-head"><strong>📄 Chiffrages</strong><span>{contactQuotes(selectedContact.id).length}</span></div>
+                    {contactQuotes(selectedContact.id).length === 0 ? <p>Aucun chiffrage lié.</p> : contactQuotes(selectedContact.id).map((quote) => (
+                      <div className="crm-erp-row" key={quote.id}>
+                        <div>
+                          <strong>{quote.title || quote.name || quote.reference || "Chiffrage"}</strong>
+                          <small>{quote.status || "Statut non renseigné"}</small>
+                        </div>
+                        <span>{formatMoney(quote.total_amount || quote.amount || quote.sale_amount || 0)}</span>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="crm-erp-panel">
+                    <div className="crm-erp-panel-head"><strong>📎 Documents</strong><span>{projectDocumentsForContact(selectedContact.id).length}</span></div>
+                    {projectDocumentsForContact(selectedContact.id).length === 0 ? <p>Aucun document projet.</p> : projectDocumentsForContact(selectedContact.id).slice(0, 8).map((document) => (
+                      <a className="crm-document-row" key={document.id} href={document.file_url || document.public_url || "#"} target="_blank" rel="noreferrer">
+                        <span>📄</span>
+                        <div><strong>{document.name || document.file_name || document.title || "Document"}</strong><small>{document.category || "Projet"}</small></div>
+                      </a>
+                    ))}
+                  </div>
+                </div>
+
                 <h4>Liaisons ERP</h4>
 
                 <div className="crm-drawer-grid">

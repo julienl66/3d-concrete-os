@@ -15,12 +15,12 @@ export default function CRM({ user, permissions }) {
   const [interactions, setInteractions] = useState([]);
   const [projects, setProjects] = useState([]);
   const [quotes, setQuotes] = useState([]);
-  const [projectDocuments, setProjectDocuments] = useState([]);
   const [selectedContact, setSelectedContact] = useState(null);
   const [opportunityForm, setOpportunityForm] = useState(null);
   const [draggedContactId, setDraggedContactId] = useState(null);
   const [message, setMessage] = useState("");
-  const [viewMode, setViewMode] = useState("board");
+  const [viewMode, setViewMode] = useState("temperature");
+  const [temperatureFilter, setTemperatureFilter] = useState("all");
   const [search, setSearch] = useState("");
   const [crmFilters, setCrmFilters] = useState({
     assigned_to: "all",
@@ -46,6 +46,7 @@ export default function CRM({ user, permissions }) {
     product_family: "",
     sector: "",
     lead_source: "",
+    competitor: "",
     priority: "normal",
     project_id: "",
     quote_id: "",
@@ -94,6 +95,7 @@ export default function CRM({ user, permissions }) {
       product_family: selectedContact.product_family || "",
       sector: selectedContact.sector || "",
       lead_source: selectedContact.lead_source || "",
+      competitor: selectedContact.competitor || "",
       priority: selectedContact.priority || "normal",
       project_id: selectedContact.project_id || "",
       quote_id: selectedContact.quote_id || "",
@@ -110,7 +112,6 @@ export default function CRM({ user, permissions }) {
       interactionsResponse,
       projectsResponse,
       quotesResponse,
-      documentsResponse,
     ] = await Promise.all([
       supabase
         .from("crm_pipeline_stages")
@@ -139,10 +140,6 @@ export default function CRM({ user, permissions }) {
         .from("quote_estimations")
         .select("*")
         .order("created_at", { ascending: false }),
-      supabase
-        .from("project_documents")
-        .select("*")
-        .order("created_at", { ascending: false }),
     ]);
 
     const error =
@@ -151,8 +148,7 @@ export default function CRM({ user, permissions }) {
       employeesResponse.error ||
       interactionsResponse.error ||
       projectsResponse.error ||
-      quotesResponse.error ||
-      documentsResponse.error;
+      quotesResponse.error;
 
     if (error) {
       setMessage(error.message);
@@ -165,7 +161,6 @@ export default function CRM({ user, permissions }) {
     setInteractions(interactionsResponse.data || []);
     setProjects(projectsResponse.data || []);
     setQuotes(quotesResponse.data || []);
-    setProjectDocuments(documentsResponse.data || []);
   }
 
   function can(action) {
@@ -234,6 +229,50 @@ export default function CRM({ user, permissions }) {
     return quotes.filter((quote) => quote.crm_contact_id === contactId);
   }
 
+  function opportunityScore(contact) {
+    const probability = Number(contact.probability_percent || contact.probability || 0);
+    const amount = Number(contact.estimated_amount || 0);
+    const inactivity = daysSinceLastActivity(contact.id);
+    const contactItems = contactInteractions(contact.id);
+    const hasMeeting = contactItems.some((item) => item.interaction_type === "rdv");
+    const hasQuote = contactItems.some((item) => item.interaction_type === "devis");
+    const hasRecentActivity = inactivity <= 7;
+    const hasOverdueAction = contactItems.some((item) => !item.done && item.next_action_date && item.next_action_date < todayValue());
+
+    let score = probability;
+    if (amount >= 50000) score += 8;
+    if (amount >= 100000) score += 5;
+    if (hasMeeting) score += 8;
+    if (hasQuote) score += 10;
+    if (hasRecentActivity) score += 7;
+    if (inactivity >= 21) score -= 18;
+    if (inactivity >= 45) score -= 15;
+    if (hasOverdueAction) score -= 5;
+
+    return Math.max(0, Math.min(100, Math.round(score)));
+  }
+
+  function opportunityTemperature(contact) {
+    const score = opportunityScore(contact);
+    if (score >= 70) return "hot";
+    if (score >= 40) return "warm";
+    return "cold";
+  }
+
+  function temperatureMeta(value) {
+    return {
+      hot: { label: "Chaud", icon: "🔥", hint: "À traiter en priorité" },
+      warm: { label: "Tiède", icon: "🟠", hint: "À faire avancer" },
+      cold: { label: "Froid", icon: "🔵", hint: "À réactiver" },
+    }[value] || { label: "Non classé", icon: "⚪", hint: "" };
+  }
+
+  function nextActionForContact(contactId) {
+    return contactInteractions(contactId)
+      .filter((item) => !item.done && item.next_action_date)
+      .sort((a, b) => String(a.next_action_date).localeCompare(String(b.next_action_date)))[0] || null;
+  }
+
   const filteredContacts = useMemo(() => {
     const query = search.toLowerCase().trim();
 
@@ -275,16 +314,20 @@ export default function CRM({ user, permissions }) {
       const matchesProbability =
         !crmFilters.min_probability || probability >= Number(crmFilters.min_probability || 0);
 
+      const matchesTemperature =
+        temperatureFilter === "all" || opportunityTemperature(contact) === temperatureFilter;
+
       return (
         matchesSearch &&
         matchesAssigned &&
         matchesPriority &&
         matchesForecast &&
         matchesStage &&
-        matchesProbability
+        matchesProbability &&
+        matchesTemperature
       );
     });
-  }, [contacts, search, crmFilters, stages]);
+  }, [contacts, search, crmFilters, stages, interactions, temperatureFilter]);
 
   const alerts = useMemo(() => {
     return interactions
@@ -329,7 +372,7 @@ export default function CRM({ user, permissions }) {
   );
 
   const hotOpportunities = filteredOpenOpportunities
-    .filter((contact) => Number(contact.probability_percent || contact.probability || 0) >= 70)
+    .filter((contact) => opportunityTemperature(contact) === "hot")
     .sort((a, b) => weightedPipe(b) - weightedPipe(a))
     .slice(0, 6);
 
@@ -337,6 +380,22 @@ export default function CRM({ user, permissions }) {
     .filter((contact) => daysSinceLastActivity(contact.id) >= 21)
     .sort((a, b) => daysSinceLastActivity(b.id) - daysSinceLastActivity(a.id))
     .slice(0, 6);
+
+  const temperatureGroups = {
+    hot: filteredOpenOpportunities
+      .filter((contact) => opportunityTemperature(contact) === "hot")
+      .sort((a, b) => opportunityScore(b) - opportunityScore(a)),
+    warm: filteredOpenOpportunities
+      .filter((contact) => opportunityTemperature(contact) === "warm")
+      .sort((a, b) => opportunityScore(b) - opportunityScore(a)),
+    cold: filteredOpenOpportunities
+      .filter((contact) => opportunityTemperature(contact) === "cold")
+      .sort((a, b) => daysSinceLastActivity(b.id) - daysSinceLastActivity(a.id)),
+  };
+
+  function temperatureAmount(key) {
+    return temperatureGroups[key].reduce((sum, contact) => sum + Number(contact.estimated_amount || 0), 0);
+  }
 
   const forecastMonths = Array.from(
     new Set(
@@ -734,6 +793,7 @@ export default function CRM({ user, permissions }) {
       product_family: opportunityForm.product_family || null,
       sector: opportunityForm.sector || null,
       lead_source: opportunityForm.lead_source || null,
+      competitor: opportunityForm.competitor || null,
       priority: opportunityForm.priority || "normal",
       project_id: opportunityForm.project_id || null,
       quote_id: opportunityForm.quote_id || null,
@@ -829,6 +889,7 @@ export default function CRM({ user, permissions }) {
       product_family: contactForm.product_family || null,
       sector: contactForm.sector || null,
       lead_source: contactForm.lead_source || null,
+      competitor: contactForm.competitor || null,
       priority: contactForm.priority || "normal",
       project_id: contactForm.project_id || null,
       quote_id: contactForm.quote_id || null,
@@ -876,7 +937,8 @@ export default function CRM({ user, permissions }) {
       product_family: "",
       sector: "",
       lead_source: "",
-        priority: "normal",
+      competitor: "",
+      priority: "normal",
       project_id: "",
       quote_id: "",
       notes: "",
@@ -1369,31 +1431,6 @@ export default function CRM({ user, permissions }) {
     return labels[value] || value || "Normale";
   }
 
-  function interactionMeta(type) {
-    const meta = {
-      appel: { icon: "📞", label: "Appel", className: "call" },
-      email: { icon: "✉️", label: "Email", className: "email" },
-      rdv: { icon: "📅", label: "Rendez-vous", className: "meeting" },
-      devis: { icon: "💰", label: "Devis", className: "quote" },
-      relance: { icon: "⏰", label: "Relance", className: "followup" },
-      note: { icon: "📝", label: "Note", className: "note" },
-    };
-
-    return meta[type] || { icon: "•", label: type || "Activité", className: "default" };
-  }
-
-  function formatActivityDate(value) {
-    if (!value) return "Date non renseignée";
-
-    return new Intl.DateTimeFormat("fr-FR", {
-      day: "2-digit",
-      month: "long",
-      year: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-    }).format(new Date(value));
-  }
-
   function stageMetrics(stageContacts) {
     const raw = stageContacts.reduce(
       (sum, contact) => sum + Number(contact.estimated_amount || 0),
@@ -1426,132 +1463,43 @@ export default function CRM({ user, permissions }) {
     };
   }
 
-
-  function qualificationMeta(contact) {
-    const probability = Number(contact?.probability_percent || contact?.probability || 0);
-    const score = opportunityScore(contact);
-
-    if (probability >= 70 || score >= 80) {
-      return { label: "Chaud", icon: "🔥", className: "hot" };
-    }
-
-    if (probability >= 40 || score >= 50) {
-      return { label: "Tiède", icon: "🟠", className: "warm" };
-    }
-
-    return { label: "Froid", icon: "🔵", className: "cold" };
-  }
-
-  function clientCategory(contact) {
-    const source = `${contact?.sector || ""} ${contact?.contact_type || ""} ${contact?.company_name || ""}`.toLowerCase();
-    const categories = [
-      ["communauté", "Communauté de communes"],
-      ["commune", "Commune"],
-      ["mairie", "Commune"],
-      ["ville", "Commune"],
-      ["office de tourisme", "Office de tourisme"],
-      ["architect", "Architecte"],
-      ["promoteur", "Promoteur"],
-      ["industrie", "Industrie"],
-      ["association", "Association"],
-      ["particulier", "Particulier"],
-      ["département", "Département"],
-      ["region", "Région"],
-      ["région", "Région"],
-    ];
-    return categories.find(([needle]) => source.includes(needle))?.[1] || contact?.sector || "Entreprise / autre";
-  }
-
-  function relativeActivityLabel(contactId) {
-    const days = daysSinceLastActivity(contactId);
-    if (days === 999) return "Aucune activité";
-    if (days <= 0) return "Aujourd’hui";
-    if (days === 1) return "Hier";
-    return `Il y a ${days} jours`;
-  }
-
-  function projectStatusLabel(status) {
-    const labels = {
-      validated: "Validé",
-      production: "En production",
-      ready: "Prêt",
-      installed: "Posé",
-      archived: "Archivé",
-      pending: "À valider",
-    };
-    return labels[status] || status || "Non renseigné";
-  }
-
-  function projectDocumentsForContact(contactId) {
-    const ids = new Set(contactProjects(contactId).map((project) => project.id));
-    return projectDocuments.filter((document) => ids.has(document.project_id));
-  }
-
-  function processSteps(contact) {
-    const hasMeeting = contactInteractions(contact.id).some((item) => item.interaction_type === "rdv");
-    const hasQuote = contactQuotes(contact.id).length > 0 || contactInteractions(contact.id).some((item) => item.interaction_type === "devis");
-    const hasProject = contactProjects(contact.id).length > 0 || Boolean(contact.project_id);
-    return [
-      { label: "Lead", done: true },
-      { label: "Qualifié", done: Number(contact.probability_percent || contact.probability || 0) >= 30 },
-      { label: "RDV", done: hasMeeting },
-      { label: "Devis", done: hasQuote },
-      { label: "Projet", done: hasProject },
-      { label: "Signé", done: isWonStage(contact.stage_id) || contactProjects(contact.id).some((project) => project.signed_date) },
-    ];
-  }
-
   function contactCard(contact) {
-    const probability = Number(contact.probability_percent || contact.probability || 0);
-    const qualification = qualificationMeta(contact);
-
     return (
       <div
-        className="crm-card crm-card-v2 crm-card-360"
+        className="crm-card"
         draggable
         onDragStart={() => setDraggedContactId(contact.id)}
         onDragEnd={() => setDraggedContactId(null)}
         onClick={() => setSelectedContact(contact)}
       >
-        <div className="crm-card-v2-head">
-          <div>
-            <strong>{contact.company_name}</strong>
-            <small>{contact.city || "Ville non renseignée"}</small>
-          </div>
-          <span className={`crm-qualification-badge ${qualification.className}`}>
-            {qualification.icon} {qualification.label}
+        <div className="crm-card-title-row">
+          <strong>{contact.company_name}</strong>
+          <span className={`crm-temperature-badge ${opportunityTemperature(contact)}`}>
+            {temperatureMeta(opportunityTemperature(contact)).icon} {temperatureMeta(opportunityTemperature(contact)).label}
           </span>
         </div>
-
-        <div className="crm-card-v2-contact">
-          <span>👤</span>
-          <div>
-            <strong>{contact.contact_name || "Contact non renseigné"}</strong>
-            <small>{employeeName(contact.assigned_to)} · {clientCategory(contact)}</small>
-          </div>
+        <small>{contact.contact_name || "-"} · {contact.city || "-"}</small>
+        <small>{employeeName(contact.assigned_to)} · score {opportunityScore(contact)}/100</small>
+        <div className="crm-pipe-mini">
+          <span>{formatMoney(contact.estimated_amount || 0)}</span>
+          <span>{Number(contact.probability_percent || contact.probability || 0)} %</span>
+          <strong>{formatMoney(weightedPipe(contact))}</strong>
         </div>
-
-        <div className="crm-card-v2-kpis">
-          <div><small>Montant</small><strong>{formatMoney(contact.estimated_amount || 0)}</strong></div>
-          <div><small>Probabilité</small><strong>{probability} %</strong></div>
-          <div><small>Pondéré</small><strong>{formatMoney(weightedPipe(contact))}</strong></div>
-        </div>
-
-        <div className="crm-card-v2-meta">
-          <span>📅 {contact.expected_signature_month || "Non planifiée"}</span>
-          <span>🕒 {relativeActivityLabel(contact.id)}</span>
-        </div>
-
-        <div className="crm-card-v2-footer">
-          <span>{contact.product_family || "Famille non renseignée"}</span>
-          <span className={`crm-priority-badge ${contact.priority || "normal"}`}>{priorityLabel(contact.priority)}</span>
-        </div>
+        <small>{contact.product_family || "Famille non renseignée"} · {priorityLabel(contact.priority)}</small>
 
         <div className="crm-card-actions">
-          <button className="btn small" onClick={(e) => { e.stopPropagation(); openPhone(contact); }}>Appeler</button>
-          <button className="btn small" onClick={(e) => { e.stopPropagation(); openEmail(contact); }}>Email</button>
-          <button className="btn small" onClick={(e) => { e.stopPropagation(); editContact(contact); }}>Modifier</button>
-          <button className="btn small danger-soft" onClick={(e) => { e.stopPropagation(); deleteContact(contact); }}>Supprimer</button>
+          <button className="btn small" onClick={(e) => { e.stopPropagation(); openPhone(contact); }}>
+            Appeler
+          </button>
+          <button className="btn small" onClick={(e) => { e.stopPropagation(); openEmail(contact); }}>
+            Email
+          </button>
+          <button className="btn small" onClick={(e) => { e.stopPropagation(); editContact(contact); }}>
+            Modifier
+          </button>
+          <button className="btn small danger-soft" onClick={(e) => { e.stopPropagation(); deleteContact(contact); }}>
+            Supprimer
+          </button>
         </div>
       </div>
     );
@@ -1576,8 +1524,11 @@ export default function CRM({ user, permissions }) {
             Modèle CSV
           </button>
 
+          <button className={viewMode === "temperature" ? "btn primary" : "btn small"} onClick={() => setViewMode("temperature")}>
+            Chaud / Tiède / Froid
+          </button>
           <button className={viewMode === "board" ? "btn primary" : "btn small"} onClick={() => setViewMode("board")}>
-            Board
+            Pipeline
           </button>
           <button className={viewMode === "analytics" ? "btn primary" : "btn small"} onClick={() => setViewMode("analytics")}>
             Analyse
@@ -1707,10 +1658,30 @@ export default function CRM({ user, permissions }) {
                 stage_id: "all",
                 min_probability: "",
               });
+              setTemperatureFilter("all");
             }}
           >
             Réinitialiser
           </button>
+        </div>
+
+        <div className="crm-temperature-filters" aria-label="Filtrer par température">
+          {[
+            ["all", "Toutes", filteredOpenOpportunities.length],
+            ["hot", "🔥 Chaudes", temperatureGroups.hot.length],
+            ["warm", "🟠 Tièdes", temperatureGroups.warm.length],
+            ["cold", "🔵 Froides", temperatureGroups.cold.length],
+          ].map(([value, label, count]) => (
+            <button
+              type="button"
+              key={value}
+              className={`crm-temperature-filter ${value} ${temperatureFilter === value ? "active" : ""}`}
+              onClick={() => setTemperatureFilter(value)}
+            >
+              <span>{label}</span>
+              <strong>{count}</strong>
+            </button>
+          ))}
         </div>
 
         <div className="crm-filter-grid">
@@ -1903,6 +1874,11 @@ export default function CRM({ user, permissions }) {
           </div>
 
           <div>
+            <label>Concurrent</label>
+            <input value={contactForm.competitor} onChange={(e) => setContactForm({ ...contactForm, competitor: e.target.value })} />
+          </div>
+
+          <div>
             <label>Priorité</label>
             <select value={contactForm.priority} onChange={(e) => setContactForm({ ...contactForm, priority: e.target.value })}>
               <option value="low">Basse</option>
@@ -1939,6 +1915,77 @@ export default function CRM({ user, permissions }) {
           <button className="btn primary">Ajouter</button>
         </form>
       </div>
+
+      {viewMode === "temperature" && (
+        <div className="crm-temperature-board">
+          {["hot", "warm", "cold"].map((key) => {
+            const meta = temperatureMeta(key);
+            const items = temperatureGroups[key];
+
+            return (
+              <section className={`crm-temperature-column ${key}`} key={key}>
+                <header>
+                  <div>
+                    <span className="crm-temperature-icon">{meta.icon}</span>
+                    <div>
+                      <h3>Pipe {meta.label}</h3>
+                      <p>{meta.hint}</p>
+                    </div>
+                  </div>
+                  <div className="crm-temperature-column-kpis">
+                    <strong>{items.length}</strong>
+                    <span>{formatMoney(temperatureAmount(key))}</span>
+                  </div>
+                </header>
+
+                <div className="crm-temperature-list">
+                  {items.length === 0 ? (
+                    <div className="crm-temperature-empty">Aucune opportunité dans cette catégorie.</div>
+                  ) : (
+                    items.map((contact) => {
+                      const nextAction = nextActionForContact(contact.id);
+                      const inactivity = daysSinceLastActivity(contact.id);
+                      return (
+                        <article className="crm-temperature-card" key={contact.id} onClick={() => setSelectedContact(contact)}>
+                          <div className="crm-temperature-card-head">
+                            <div>
+                              <strong>{contact.company_name}</strong>
+                              <small>{stageName(contact.stage_id)} · {employeeName(contact.assigned_to)}</small>
+                            </div>
+                            <span className={`crm-score-badge ${key}`}>{opportunityScore(contact)}</span>
+                          </div>
+
+                          <div className="crm-temperature-money">
+                            <strong>{formatMoney(contact.estimated_amount || 0)}</strong>
+                            <span>{Number(contact.probability_percent || contact.probability || 0)} % · pondéré {formatMoney(weightedPipe(contact))}</span>
+                          </div>
+
+                          <div className="crm-temperature-meta">
+                            <span>📅 {contact.expected_signature_month || "Signature non définie"}</span>
+                            <span className={inactivity >= 21 ? "late" : ""}>☎ {inactivity === 999 ? "Aucune activité" : `il y a ${inactivity} j`}</span>
+                          </div>
+
+                          <div className={`crm-next-action ${nextAction && nextAction.next_action_date < todayValue() ? "late" : ""}`}>
+                            <span>{nextAction ? "Prochaine action" : "Action à définir"}</span>
+                            <strong>{nextAction?.next_action || nextAction?.subject || "Planifier une relance"}</strong>
+                            {nextAction?.next_action_date && <small>{nextAction.next_action_date}</small>}
+                          </div>
+
+                          <div className="crm-temperature-actions">
+                            <button className="btn small" onClick={(e) => { e.stopPropagation(); openPhone(contact); }}>Appeler</button>
+                            <button className="btn small" onClick={(e) => { e.stopPropagation(); openEmail(contact); }}>Email</button>
+                            <button className="btn small" onClick={(e) => { e.stopPropagation(); setSelectedContact(contact); }}>Ouvrir</button>
+                          </div>
+                        </article>
+                      );
+                    })
+                  )}
+                </div>
+              </section>
+            );
+          })}
+        </div>
+      )}
 
       {viewMode === "board" && (
         <>
@@ -2090,29 +2137,6 @@ export default function CRM({ user, permissions }) {
               <button className="btn small" onClick={() => setSelectedContact(null)}>← Retour au CRM</button>
             </div>
 
-            <div className="crm-360-identity">
-              <div className="crm-360-tags">
-                <span className={`crm-qualification-badge ${qualificationMeta(selectedContact).className}`}>
-                  {qualificationMeta(selectedContact).icon} {qualificationMeta(selectedContact).label}
-                </span>
-                <span className="crm-category-badge">{clientCategory(selectedContact)}</span>
-                <span className={`crm-priority-badge ${selectedContact.priority || "normal"}`}>{priorityLabel(selectedContact.priority)}</span>
-              </div>
-              <div className="crm-360-owner">
-                <span>Commercial</span>
-                <strong>{employeeName(selectedContact.assigned_to)}</strong>
-              </div>
-            </div>
-
-            <div className="crm-process-track">
-              {processSteps(selectedContact).map((step, index) => (
-                <div className={step.done ? "done" : ""} key={step.label}>
-                  <span>{step.done ? "✓" : index + 1}</span>
-                  <strong>{step.label}</strong>
-                </div>
-              ))}
-            </div>
-
             <div className="crm-drawer-score">
               <div>
                 <span>Score opportunité</span>
@@ -2255,55 +2279,14 @@ export default function CRM({ user, permissions }) {
                     <input value={opportunityForm.lead_source} onChange={(e) => updateOpportunityForm("lead_source", e.target.value)} />
                   </div>
 
+                  <div>
+                    <label>Concurrent</label>
+                    <input value={opportunityForm.competitor} onChange={(e) => updateOpportunityForm("competitor", e.target.value)} />
+                  </div>
                 </div>
               </section>
 
               <section>
-                <div className="crm-section-title">
-                  <div>
-                    <h4>Vue ERP 360°</h4>
-                    <p>Projets, chiffrages et documents liés à ce client.</p>
-                  </div>
-                </div>
-
-                <div className="crm-erp-overview">
-                  <div className="crm-erp-panel">
-                    <div className="crm-erp-panel-head"><strong>🏗 Projets</strong><span>{contactProjects(selectedContact.id).length}</span></div>
-                    {contactProjects(selectedContact.id).length === 0 ? <p>Aucun projet lié.</p> : contactProjects(selectedContact.id).map((project) => (
-                      <div className="crm-erp-row" key={project.id}>
-                        <div>
-                          <strong>{project.project_code || project.name}</strong>
-                          <small>{project.name} · {projectStatusLabel(project.status)}</small>
-                        </div>
-                        <span>{formatMoney(project.sale_amount || 0)}</span>
-                      </div>
-                    ))}
-                  </div>
-
-                  <div className="crm-erp-panel">
-                    <div className="crm-erp-panel-head"><strong>📄 Chiffrages</strong><span>{contactQuotes(selectedContact.id).length}</span></div>
-                    {contactQuotes(selectedContact.id).length === 0 ? <p>Aucun chiffrage lié.</p> : contactQuotes(selectedContact.id).map((quote) => (
-                      <div className="crm-erp-row" key={quote.id}>
-                        <div>
-                          <strong>{quote.title || quote.name || quote.reference || "Chiffrage"}</strong>
-                          <small>{quote.status || "Statut non renseigné"}</small>
-                        </div>
-                        <span>{formatMoney(quote.total_amount || quote.amount || quote.sale_amount || 0)}</span>
-                      </div>
-                    ))}
-                  </div>
-
-                  <div className="crm-erp-panel">
-                    <div className="crm-erp-panel-head"><strong>📎 Documents</strong><span>{projectDocumentsForContact(selectedContact.id).length}</span></div>
-                    {projectDocumentsForContact(selectedContact.id).length === 0 ? <p>Aucun document projet.</p> : projectDocumentsForContact(selectedContact.id).slice(0, 8).map((document) => (
-                      <a className="crm-document-row" key={document.id} href={document.file_url || document.public_url || "#"} target="_blank" rel="noreferrer">
-                        <span>📄</span>
-                        <div><strong>{document.name || document.file_name || document.title || "Document"}</strong><small>{document.category || "Projet"}</small></div>
-                      </a>
-                    ))}
-                  </div>
-                </div>
-
                 <h4>Liaisons ERP</h4>
 
                 <div className="crm-drawer-grid">
@@ -2412,30 +2395,20 @@ export default function CRM({ user, permissions }) {
                   <p>Aucune activité enregistrée.</p>
                 ) : (
                   contactInteractions(selectedContact.id).map((interaction) => (
-                    <div className={`crm-timeline-item crm-timeline-${interactionMeta(interaction.interaction_type).className}`} key={interaction.id}>
-                      <div className="crm-timeline-icon" aria-hidden="true">
-                        {interactionMeta(interaction.interaction_type).icon}
-                      </div>
-                      <div className="crm-timeline-content">
-                        <div className="crm-timeline-headline">
-                          <span>{interactionMeta(interaction.interaction_type).label}</span>
-                          <time>{formatActivityDate(interaction.created_at || interaction.interaction_date)}</time>
-                        </div>
-                        <strong>{interaction.subject || interaction.next_action || "Activité sans titre"}</strong>
-                        {(interaction.next_action || interaction.next_action_date || interaction.meeting_time || interaction.meeting_location) && (
-                          <small>
-                            {interaction.next_action ? `Action : ${interaction.next_action}` : ""}
-                            {interaction.next_action_date ? ` · échéance ${interaction.next_action_date}` : ""}
-                            {interaction.meeting_time ? ` · ${interaction.meeting_time}` : ""}
-                            {interaction.meeting_location ? ` · ${interaction.meeting_location}` : ""}
-                          </small>
-                        )}
-                        {interaction.call_duration_seconds ? (
-                          <small>Durée : {Math.floor(interaction.call_duration_seconds / 60)} min {interaction.call_duration_seconds % 60} s · statut : {interaction.call_status || "-"}</small>
-                        ) : null}
-                        {interaction.notes && <p>{interaction.notes}</p>}
-                        {interaction.done && <span className="crm-timeline-done">Traité</span>}
-                      </div>
+                    <div className="crm-timeline-item" key={interaction.id}>
+                      <span>{interaction.interaction_type}</span>
+                      <strong>{interaction.subject || interaction.next_action || "-"}</strong>
+                      <small>
+                        {interaction.next_action ? `Action : ${interaction.next_action}` : ""}
+                        {interaction.next_action_date ? ` · ${interaction.next_action_date}` : ""}
+                        {interaction.meeting_time ? ` · ${interaction.meeting_time}` : ""}
+                        {interaction.meeting_location ? ` · ${interaction.meeting_location}` : ""}
+                        {interaction.done ? " · traité" : ""}
+                      </small>
+                      {interaction.call_duration_seconds ? (
+                        <small>Durée appel : {Math.floor(interaction.call_duration_seconds / 60)} min {interaction.call_duration_seconds % 60} s · statut : {interaction.call_status || "-"}</small>
+                      ) : null}
+                      {interaction.notes && <p>{interaction.notes}</p>}
                     </div>
                   ))
                 )}

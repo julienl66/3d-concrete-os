@@ -725,6 +725,57 @@ export default function Projets({ user, permissions }) {
     await updateProject(project, { [field]: value });
   }
 
+  async function updateSignedProjectData(project) {
+    if (!hasRight("can_edit")) {
+      setMessage("Action non autorisée.");
+      return;
+    }
+
+    const signedDate = window.prompt(
+      "Date de signature du projet (AAAA-MM-JJ) ?",
+      project.signed_date || new Date().toISOString().slice(0, 10)
+    );
+
+    if (signedDate === null) return;
+
+    if (signedDate && !/^\d{4}-\d{2}-\d{2}$/.test(signedDate)) {
+      setMessage("La date de signature doit être au format AAAA-MM-JJ.");
+      return;
+    }
+
+    const saleAmountInput = window.prompt(
+      "Montant signé HT ?",
+      String(project.sale_amount || 0)
+    );
+
+    if (saleAmountInput === null) return;
+
+    const saleAmount = Number(
+      String(saleAmountInput).replace(/\s/g, "").replace(",", ".")
+    );
+
+    if (!Number.isFinite(saleAmount) || saleAmount < 0) {
+      setMessage("Le montant signé est invalide.");
+      return;
+    }
+
+    const { error } = await supabase
+      .from("projects")
+      .update({
+        signed_date: signedDate || null,
+        sale_amount: saleAmount,
+      })
+      .eq("id", project.id);
+
+    if (error) {
+      setMessage(error.message);
+      return;
+    }
+
+    setMessage("Signature et CA enregistrés. Le projet est maintenant visible dans la BI au mois correspondant.");
+    await loadData();
+  }
+
   async function changeProjectStatus(project) {
     const statuses = [
       "validated",
@@ -1836,7 +1887,9 @@ export default function Projets({ user, permissions }) {
                 <p><strong>Pose :</strong> {selectedProject.validated_installation_date || "-"}</p>
 
                 <div className="inline-actions">
-                  <button className="btn small" onClick={() => promptText(selectedProject, "signed_date", "Date signature ? AAAA-MM-JJ")}>Signature</button>
+                  <button className="btn primary" onClick={() => updateSignedProjectData(selectedProject)}>
+                    Renseigner signature & CA
+                  </button>
                   <button className="btn small" onClick={() => promptText(selectedProject, "validated_delivery_date", "Livrabilité ? AAAA-MM-JJ")}>Livraison</button>
                   <button className="btn small" onClick={() => promptText(selectedProject, "validated_installation_date", "Pose ? AAAA-MM-JJ")}>Pose</button>
                 </div>

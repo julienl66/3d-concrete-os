@@ -353,16 +353,24 @@ export default function BusinessIntelligence({ user, permissions }) {
     stockScore * 0.10
   );
 
+  function parseDateOnly(value) {
+    if (!value) return null;
+    const [year, month, day] = String(value).slice(0, 10).split("-").map(Number);
+    if (!year || !month || !day) return null;
+    return new Date(year, month - 1, day);
+  }
+
+  // Un projet signé reste du CA signé même lorsqu'il passe ensuite en production,
+  // prêt, posé ou archivé. La date de signature est la seule référence mensuelle.
   const validatedSignedProjects = useMemo(() =>
-    projects.filter((project) =>
-      project.status === "validated" && project.signed_date
-    ),
+    projects.filter((project) => Boolean(project.signed_date)),
   [projects]);
 
   const availableYears = useMemo(() => {
     const years = new Set([new Date().getFullYear()]);
     validatedSignedProjects.forEach((project) => {
-      const year = new Date(project.signed_date).getFullYear();
+      const date = parseDateOnly(project.signed_date);
+      const year = date?.getFullYear();
       if (Number.isFinite(year)) years.add(year);
     });
     return [...years].sort((a, b) => b - a);
@@ -371,8 +379,8 @@ export default function BusinessIntelligence({ user, permissions }) {
   const monthlyRevenue = useMemo(() => {
     return Array.from({ length: 12 }, (_, index) => {
       const monthProjects = validatedSignedProjects.filter((project) => {
-        const date = new Date(project.signed_date);
-        return date.getFullYear() === selectedYear && date.getMonth() === index;
+        const date = parseDateOnly(project.signed_date);
+        return date?.getFullYear() === selectedYear && date?.getMonth() === index;
       });
 
       return {
@@ -715,7 +723,7 @@ export default function BusinessIntelligence({ user, permissions }) {
               <div className="bi-section-head">
                 <div>
                   <h3>CA signé mensuel — {selectedYear}</h3>
-                  <p>Uniquement les projets validés, classés selon leur date de signature.</p>
+                  <p>Tous les projets signés, classés selon leur date de signature, quel que soit leur statut actuel.</p>
                 </div>
                 <strong>{formatMoney(selectedYearRevenue)}</strong>
               </div>

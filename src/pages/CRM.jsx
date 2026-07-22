@@ -8,6 +8,21 @@ import { openAlloCall } from "../services/allo.js";
 
 const INTERACTION_TYPES = ["note", "appel", "email", "rdv", "devis", "relance"];
 
+const COMMERCIAL_PIPELINE = [
+  { name: "Suspect ciblé", color: "#64748b", probability: 5, icon: "🎯" },
+  { name: "Prospect contacté — sans réponse", color: "#0ea5e9", probability: 10, icon: "📞" },
+  { name: "Prospect contacté — réponse reçue", color: "#0284c7", probability: 20, icon: "✅" },
+  { name: "À recontacter", color: "#f59e0b", probability: 25, icon: "🔄" },
+  { name: "RDV 1 planifié", color: "#eab308", probability: 35, icon: "📅" },
+  { name: "RDV 1 réalisé", color: "#d97706", probability: 45, icon: "🤝" },
+  { name: "RDV 2 planifié", color: "#f97316", probability: 55, icon: "📅" },
+  { name: "RDV 2 réalisé", color: "#ea580c", probability: 65, icon: "🤝" },
+  { name: "Devis à préparer", color: "#8b5cf6", probability: 70, icon: "📝" },
+  { name: "Devis envoyé", color: "#7c3aed", probability: 75, icon: "📄" },
+  { name: "Devis en discussion", color: "#db2777", probability: 85, icon: "💬" },
+  { name: "Devis validé", color: "#16a34a", probability: 100, icon: "✅" },
+];
+
 export default function CRM({ user, permissions }) {
   const [stages, setStages] = useState([]);
   const [contacts, setContacts] = useState([]);
@@ -183,6 +198,16 @@ export default function CRM({ user, permissions }) {
 
   function stageName(stageId) {
     return stages.find((stage) => stage.id === stageId)?.name || "Sans étape";
+  }
+
+  function pipelineDefinitionForStage(stage) {
+    const byOrder = COMMERCIAL_PIPELINE[Number(stage?.stage_order || 0) - 1];
+    return byOrder || COMMERCIAL_PIPELINE.find((item) => item.name === stage?.name) || null;
+  }
+
+  function pipelineIsConfigured() {
+    const ordered = [...stages].sort((a, b) => Number(a.stage_order || 0) - Number(b.stage_order || 0));
+    return ordered.length === COMMERCIAL_PIPELINE.length && ordered.every((stage, index) => stage.name === COMMERCIAL_PIPELINE[index].name);
   }
 
   function contactInteractions(contactId) {
@@ -954,46 +979,82 @@ export default function CRM({ user, permissions }) {
       return;
     }
 
+    const contact = contacts.find((item) => item.id === contactId);
     const targetStage = stages.find((stage) => stage.id === stageId);
+    const definition = pipelineDefinitionForStage(targetStage);
+    const targetName = definition?.name || targetStage?.name || "Sans étape";
 
-    const patch = {
-      stage_id: stageId,
-    };
+    let interactionPayload = null;
 
-    if (targetStage?.default_probability_percent !== undefined && targetStage?.default_probability_percent !== null) {
-      patch.probability_percent = Number(targetStage.default_probability_percent);
+    if (["RDV 1 réalisé", "RDV 2 réalisé"].includes(targetName)) {
+      const notes = window.prompt(`Compte rendu du ${targetName} ?`, "");
+      if (notes === null) return;
+      interactionPayload = {
+        contact_id: contactId,
+        interaction_type: "rdv",
+        subject: targetName,
+        notes: notes || null,
+        created_by: user?.id || null,
+      };
     }
 
-    const { error } = await supabase
-      .from("crm_contacts")
-      .update(patch)
-      .eq("id", contactId);
+    if (targetName === "Devis envoyé") {
+      const amount = window.prompt("Montant du devis HT ?", String(contact?.estimated_amount || ""));
+      if (amount === null) return;
+      const followUpDate = window.prompt("Date de relance ? Format AAAA-MM-JJ", "");
+      if (followUpDate === null) return;
+      interactionPayload = {
+        contact_id: contactId,
+        interaction_type: "devis",
+        subject: "Devis envoyé",
+        next_action: followUpDate ? "Relancer sur le devis" : null,
+        next_action_date: followUpDate || null,
+        created_by: user?.id || null,
+      };
+      contact.estimated_amount = Number(amount || 0);
+    }
 
+    const patch = { stage_id: stageId };
+    if (definition?.probability !== undefined) patch.probability_percent = definition.probability;
+    else if (targetStage?.default_probability_percent != null) patch.probability_percent = Number(targetStage.default_probability_percent);
+    if (targetName === "Devis envoyé" && contact) patch.estimated_amount = Number(contact.estimated_amount || 0);
+
+    const { error } = await supabase.from("crm_contacts").update(patch).eq("id", contactId);
     if (error) {
       setMessage(error.message);
       return;
     }
 
-    const contact = contacts.find((item) => item.id === contactId);
-    const stage = stages.find((item) => item.id === stageId);
+    if (interactionPayload) {
+      const { error: interactionError } = await supabase.from("crm_interactions").insert(interactionPayload);
+      if (interactionError) {
+        setMessage(`Étape mise à jour, mais activité non créée : ${interactionError.message}`);
+      }
+    }
 
     await emitEvent({
       event_type: "CRM_STAGE_CHANGED",
       entity_type: "crm",
       entity_id: contactId,
-      title: `${contact?.company_name || "Opportunité"} déplacé en ${stage?.name || "Sans étape"}`,
+      title: `${contact?.company_name || "Opportunité"} déplacé en ${targetName}`,
       description: contact?.contact_name || null,
       payload: {
         contact_id: contactId,
         stage_id: stageId,
-        stage_name: stage?.name || null,
-        estimated_amount: contact?.estimated_amount || 0,
-        probability_percent: targetStage?.default_probability_percent ?? contact?.probability_percent ?? null,
+        stage_name: targetName,
+        estimated_amount: patch.estimated_amount ?? contact?.estimated_amount ?? 0,
+        probability_percent: patch.probability_percent ?? contact?.probability_percent ?? null,
       },
       user,
     });
 
+    setMessage(`Étape mise à jour : ${targetName}.`);
     await loadData();
+
+    if (targetName === "Devis validé" && contact && !contact.project_id) {
+      const createProject = window.confirm("Devis validé. Créer maintenant le projet ERP lié ?");
+      if (createProject) await createProjectFromOpportunity({ ...contact, ...patch });
+    }
   }
 
   async function editContact(contact) {
@@ -1177,6 +1238,75 @@ export default function CRM({ user, permissions }) {
     }
 
     setMessage("Alerte traitée.");
+    await loadData();
+  }
+
+  async function configureCommercialPipeline() {
+    if (!can("can_edit")) {
+      setMessage("Action non autorisée.");
+      return;
+    }
+
+    const ok = window.confirm(
+      "Installer les 12 étapes exactes du processus commercial ? Les opportunités conservent leur étape actuelle par position. Les étapes supplémentaires seront archivées."
+    );
+    if (!ok) return;
+
+    const orderedStages = [...stages].sort((a, b) => Number(a.stage_order || 0) - Number(b.stage_order || 0));
+    const keptIds = [];
+
+    for (let index = 0; index < COMMERCIAL_PIPELINE.length; index += 1) {
+      const definition = COMMERCIAL_PIPELINE[index];
+      const existing = orderedStages[index];
+
+      if (existing) {
+        const { error } = await supabase
+          .from("crm_pipeline_stages")
+          .update({
+            name: definition.name,
+            color: definition.color,
+            stage_order: index + 1,
+            active: true,
+            default_probability_percent: definition.probability,
+          })
+          .eq("id", existing.id);
+
+        if (error) {
+          setMessage(error.message);
+          return;
+        }
+        keptIds.push(existing.id);
+      } else {
+        const { data, error } = await supabase
+          .from("crm_pipeline_stages")
+          .insert({
+            name: definition.name,
+            color: definition.color,
+            stage_order: index + 1,
+            active: true,
+            default_probability_percent: definition.probability,
+          })
+          .select()
+          .single();
+
+        if (error) {
+          setMessage(error.message);
+          return;
+        }
+        keptIds.push(data.id);
+      }
+    }
+
+    const extraStages = orderedStages.slice(COMMERCIAL_PIPELINE.length);
+    if (extraStages.length > 0) {
+      const firstStageId = keptIds[0];
+      for (const extra of extraStages) {
+        await supabase.from("crm_contacts").update({ stage_id: firstStageId }).eq("stage_id", extra.id);
+        await supabase.from("crm_pipeline_stages").update({ active: false }).eq("id", extra.id);
+      }
+    }
+
+    setMessage("Pipeline commercial installé avec les 12 étapes demandées.");
     await loadData();
   }
 
@@ -1464,44 +1594,49 @@ export default function CRM({ user, permissions }) {
   }
 
   function contactCard(contact) {
+    const nextAction = nextActionForContact(contact.id);
+    const inactivity = daysSinceLastActivity(contact.id);
+    const temperature = opportunityTemperature(contact);
+
     return (
-      <div
-        className="crm-card"
+      <article
+        className="crm-card crm-pipeline-card"
         draggable
         onDragStart={() => setDraggedContactId(contact.id)}
         onDragEnd={() => setDraggedContactId(null)}
-        onClick={() => setSelectedContact(contact)}
+        onDoubleClick={() => setSelectedContact(contact)}
       >
         <div className="crm-card-title-row">
           <strong>{contact.company_name}</strong>
-          <span className={`crm-temperature-badge ${opportunityTemperature(contact)}`}>
-            {temperatureMeta(opportunityTemperature(contact)).icon} {temperatureMeta(opportunityTemperature(contact)).label}
+          <span className={`crm-temperature-badge ${temperature}`} title={`Score ${opportunityScore(contact)}/100`}>
+            {temperatureMeta(temperature).icon} {temperatureMeta(temperature).label}
           </span>
         </div>
-        <small>{contact.contact_name || "-"} · {contact.city || "-"}</small>
-        <small>{employeeName(contact.assigned_to)} · score {opportunityScore(contact)}/100</small>
-        <div className="crm-pipe-mini">
-          <span>{formatMoney(contact.estimated_amount || 0)}</span>
-          <span>{Number(contact.probability_percent || contact.probability || 0)} %</span>
-          <strong>{formatMoney(weightedPipe(contact))}</strong>
-        </div>
-        <small>{contact.product_family || "Famille non renseignée"} · {priorityLabel(contact.priority)}</small>
 
-        <div className="crm-card-actions">
-          <button className="btn small" onClick={(e) => { e.stopPropagation(); openPhone(contact); }}>
-            Appeler
-          </button>
-          <button className="btn small" onClick={(e) => { e.stopPropagation(); openEmail(contact); }}>
-            Email
-          </button>
-          <button className="btn small" onClick={(e) => { e.stopPropagation(); editContact(contact); }}>
-            Modifier
-          </button>
-          <button className="btn small danger-soft" onClick={(e) => { e.stopPropagation(); deleteContact(contact); }}>
-            Supprimer
-          </button>
+        <div className="crm-pipeline-card-amount">
+          <strong>{formatMoney(contact.estimated_amount || 0)}</strong>
+          <span>{Number(contact.probability_percent || contact.probability || 0)} %</span>
         </div>
-      </div>
+
+        <div className="crm-pipeline-card-meta">
+          <span>👤 {employeeName(contact.assigned_to)}</span>
+          <span className={inactivity >= 21 ? "late" : ""}>☎ {inactivity === 999 ? "aucune activité" : `il y a ${inactivity} j`}</span>
+        </div>
+
+        <div className={`crm-pipeline-next ${nextAction?.next_action_date && nextAction.next_action_date < todayValue() ? "late" : ""}`}>
+          <span>📅</span>
+          <div>
+            <strong>{nextAction?.next_action || nextAction?.subject || "Relance à définir"}</strong>
+            <small>{nextAction?.next_action_date || contact.expected_signature_month || "Aucune date"}</small>
+          </div>
+        </div>
+
+        <div className="crm-card-actions crm-pipeline-card-actions">
+          <button className="btn small" onClick={() => openPhone(contact)}>Appeler</button>
+          <button className="btn small" onClick={() => openEmail(contact)}>Email</button>
+          <button className="btn small primary" onClick={() => setSelectedContact(contact)}>Ouvrir</button>
+        </div>
+      </article>
     );
   }
 
@@ -1989,6 +2124,15 @@ export default function CRM({ user, permissions }) {
 
       {viewMode === "board" && (
         <>
+          {!pipelineIsConfigured() && (
+            <div className="crm-pipeline-setup-banner">
+              <div>
+                <strong>Le pipeline ne correspond pas encore au processus commercial défini.</strong>
+                <span>Installe les 12 étapes : du suspect ciblé jusqu'au devis validé.</span>
+              </div>
+              <button className="btn primary" onClick={configureCommercialPipeline}>Installer les 12 étapes</button>
+            </div>
+          )}
           <div className="crm-board-summary">
             <span>{filteredContacts.length} opportunité(s) affichée(s)</span>
             <strong>{formatMoney(crmPipelineWeighted)} pondéré</strong>
@@ -2006,29 +2150,17 @@ export default function CRM({ user, permissions }) {
                   onDragOver={(e) => e.preventDefault()}
                   onDrop={() => draggedContactId && updateContactStage(draggedContactId, stage.id)}
                 >
-                  <div className="crm-column-head crm-smart-column-head" style={{ borderTopColor: stage.color || "#2563eb" }}>
-                    <div>
-                      <strong>{stage.name}</strong>
-                      <span>{stageContacts.length} opportunité(s)</span>
+                  <div className="crm-column-head crm-smart-column-head crm-pipeline-column-head" style={{ borderTopColor: stage.color || "#2563eb" }}>
+                    <div className="crm-pipeline-stage-title">
+                      <span className="crm-pipeline-stage-icon">{pipelineDefinitionForStage(stage)?.icon || "•"}</span>
+                      <div>
+                        <strong>{stage.name}</strong>
+                        <small>{stageContacts.length} dossier(s)</small>
+                      </div>
                     </div>
-
-                    <div className="crm-column-kpis">
-                      <div>
-                        <small>Pipe brut</small>
-                        <b>{formatMoney(metrics.raw)}</b>
-                      </div>
-                      <div>
-                        <small>Pondéré</small>
-                        <b>{formatMoney(metrics.weighted)}</b>
-                      </div>
-                      <div>
-                        <small>Proba moy.</small>
-                        <b>{Math.round(metrics.avgProbability)} %</b>
-                      </div>
-                      <div>
-                        <small>Ce mois</small>
-                        <b>{formatMoney(metrics.currentMonthForecast)}</b>
-                      </div>
+                    <div className="crm-pipeline-stage-money">
+                      <strong>{formatMoney(metrics.raw)}</strong>
+                      <small>{formatMoney(metrics.weighted)} pondéré</small>
                     </div>
                   </div>
 
@@ -2095,7 +2227,13 @@ export default function CRM({ user, permissions }) {
 
       {viewMode === "settings" && (
         <div className="card">
-          <h3>Étapes du pipeline</h3>
+          <div className="crm-settings-pipeline-head">
+            <div>
+              <h3>Étapes du pipeline</h3>
+              <p>Processus commercial officiel en 12 étapes.</p>
+            </div>
+            <button className="btn primary" onClick={configureCommercialPipeline}>Installer / réinitialiser les 12 étapes</button>
+          </div>
 
           <form className="crm-stage-form" onSubmit={createStage}>
             <input

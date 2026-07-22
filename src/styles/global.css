@@ -9309,3 +9309,94 @@ textarea:focus {
     width: 100%;
   }
 }
+
+/* ===== FICHE CRM PLEIN ÉCRAN + CONVERSATION EMAIL CLAIRE ===== */
+.crm-drawer-backdrop {
+  position: fixed !important;
+  inset: 0 !important;
+  z-index: 5000 !important;
+  padding: 0 !important;
+  background: rgba(15, 23, 42, .42) !important;
+}
+
+.crm-drawer {
+  position: fixed !important;
+  inset: 0 !important;
+  width: 100vw !important;
+  max-width: none !important;
+  height: 100vh !important;
+  max-height: none !important;
+  margin: 0 !important;
+  border-radius: 0 !important;
+  overflow-y: auto !important;
+  background: #f8fafc !important;
+  box-shadow: none !important;
+}
+
+.crm-drawer-head {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  padding: 22px clamp(20px, 4vw, 64px) !important;
+  background: rgba(255,255,255,.97);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.crm-drawer > .crm-drawer-score,
+.crm-drawer > .crm-opportunity-summary,
+.crm-drawer > .crm-contact-actions,
+.crm-drawer > .crm-drawer-form,
+.crm-drawer > .crm-drawer-section {
+  width: min(1440px, calc(100% - 48px));
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.crm-drawer > .crm-drawer-score { margin-top: 24px; }
+.crm-drawer > .crm-drawer-section { background: #fff; }
+
+.crm-email-panel { gap: 18px; }
+.crm-email-panel-head { padding-bottom: 16px; border-bottom: 1px solid #e2e8f0; }
+.crm-email-panel-head h4 { font-size: 22px; margin-top: 2px; }
+.crm-email-legend { display: flex; flex-wrap: wrap; gap: 18px; color: #64748b; font-size: 13px; }
+.crm-email-legend span { display: inline-flex; align-items: center; gap: 7px; }
+.crm-email-legend i { width: 11px; height: 11px; border-radius: 50%; display: inline-block; }
+.crm-email-legend i.incoming { background: #2563eb; }
+.crm-email-legend i.outgoing { background: #16a34a; }
+
+.crm-email-conversation {
+  min-height: 280px;
+  max-height: 680px;
+  overflow-y: auto;
+  padding: 22px;
+  border: 1px solid #dbe3ee;
+  border-radius: 18px;
+  background: #f1f5f9;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.crm-email-state { margin: auto; color: #64748b; text-align: center; padding: 50px 20px; }
+.crm-email-bubble { width: min(820px, 86%); padding: 16px 18px; border-radius: 18px; box-shadow: 0 5px 18px rgba(15,23,42,.06); }
+.crm-email-bubble.incoming { align-self: flex-start; background: #fff; border: 1px solid #bfdbfe; border-top-left-radius: 5px; }
+.crm-email-bubble.outgoing { align-self: flex-end; background: #ecfdf5; border: 1px solid #bbf7d0; border-top-right-radius: 5px; }
+.crm-email-bubble-meta { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 8px; }
+.crm-email-bubble-meta time { color: #64748b; font-size: 12px; }
+.crm-email-subject { display: block; font-size: 16px; margin-bottom: 4px; color: #0f172a; }
+.crm-email-bubble small { color: #64748b; }
+.crm-email-body { margin-top: 12px; color: #334155; line-height: 1.58; white-space: pre-wrap; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 5; -webkit-box-orient: vertical; overflow: hidden; }
+.crm-email-body.expanded { display: block; overflow: visible; }
+.crm-email-expand { margin-top: 10px; padding: 0; border: 0; background: transparent; color: #2563eb; font-weight: 700; cursor: pointer; }
+.crm-email-direction.incoming { background: #dbeafe; color: #1d4ed8; }
+
+@media (max-width: 760px) {
+  .crm-drawer > .crm-drawer-score,
+  .crm-drawer > .crm-opportunity-summary,
+  .crm-drawer > .crm-contact-actions,
+  .crm-drawer > .crm-drawer-form,
+  .crm-drawer > .crm-drawer-section { width: calc(100% - 24px); }
+  .crm-email-bubble { width: 96%; }
+  .crm-email-conversation { padding: 12px; }
+}

@@ -29,7 +29,6 @@ export default function CRM({ user, permissions }) {
     min_probability: "",
   });
   const [activeCall, setActiveCall] = useState(null);
-  const [emailComposerSignal, setEmailComposerSignal] = useState(0);
 
   const [contactForm, setContactForm] = useState({
     company_name: "",
@@ -1233,8 +1232,9 @@ export default function CRM({ user, permissions }) {
       return;
     }
 
+    // Le clic ouvre d'abord la fiche complète. L'envoi reste une action explicite
+    // depuis le panneau Emails afin d'éviter l'ouverture automatique du composeur.
     setSelectedContact(contact);
-    setEmailComposerSignal((value) => value + 1);
   }
 
   async function saveCallInteraction(status = "called") {
@@ -1965,12 +1965,12 @@ export default function CRM({ user, permissions }) {
           <aside className="crm-drawer" onClick={(e) => e.stopPropagation()}>
             <div className="crm-drawer-head">
               <div>
-                <p className="eyebrow">Fiche opportunité</p>
+                <p className="eyebrow">Fiche client complète</p>
                 <h3>{selectedContact.company_name}</h3>
                 <p>{selectedContact.contact_name || "-"} · {selectedContact.email || "-"} · {selectedContact.phone || "-"}</p>
               </div>
 
-              <button className="btn small" onClick={() => setSelectedContact(null)}>Fermer</button>
+              <button className="btn small" onClick={() => setSelectedContact(null)}>← Retour au CRM</button>
             </div>
 
             <div className="crm-drawer-score">
@@ -2213,7 +2213,6 @@ export default function CRM({ user, permissions }) {
               <CrmEmailPanel
                 contact={selectedContact}
                 user={user}
-                openComposerSignal={emailComposerSignal}
                 onActivityCreated={loadData}
               />
             </div>

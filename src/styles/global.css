@@ -9400,18 +9400,3 @@ textarea:focus {
   .crm-email-bubble { width: 96%; }
   .crm-email-conversation { padding: 12px; }
 }
-
-/* Sprint 1 CRM */
-.crm-drawer.crm-drawer-fullscreen{width:100vw;max-width:none;padding:24px 32px;box-shadow:none}
-.crm-client-tabs{position:sticky;top:0;z-index:4;display:flex;gap:8px;overflow:auto;background:#f8fafc;padding:10px 0 16px;margin-bottom:8px}
-.crm-client-tabs button{border:1px solid #dbe3ee;background:#fff;border-radius:999px;padding:10px 16px;font-weight:900;white-space:nowrap;cursor:pointer}
-.crm-client-tabs button.active{background:#111827;color:#fff;border-color:#111827}
-.crm-activity-list{display:grid;gap:10px;margin-top:18px}
-.crm-activity-card{border:1px solid #e5e7eb;border-radius:18px;padding:14px;background:#f8fafc}
-.crm-activity-card span{font-size:11px;text-transform:uppercase;color:#64748b;font-weight:1000;display:block}
-.crm-activity-card strong{display:block;margin-top:3px}
-.crm-activity-card small{display:block;color:#64748b;margin:6px 0}
-.crm-stage-history{display:grid;gap:10px}
-.crm-stage-history>div{display:flex;justify-content:space-between;gap:16px;padding:14px;border-radius:14px;background:#f8fafc;border:1px solid #e5e7eb}
-.crm-stage-history small{color:#64748b}
-@media(max-width:700px){.crm-drawer.crm-drawer-fullscreen{padding:12px}.crm-client-tabs{top:0}.crm-stage-history>div{display:block}}

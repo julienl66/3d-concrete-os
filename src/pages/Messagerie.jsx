@@ -109,6 +109,40 @@ export default function Messagerie({ user }) {
     }
   }, [userId, folder, search, selectedId]);
 
+
+  const synchronize = useCallback(async ({ silent = false } = {}) => {
+    if (!userId || syncInProgressRef.current) return;
+
+    syncInProgressRef.current = true;
+    setSyncing(true);
+
+    if (!silent) {
+      setMessage("");
+    }
+
+    try {
+      const result = await refreshGmail(userId);
+
+      if (!silent) {
+        setMessage(
+          `${result?.threads_synced ?? 0} conversation(s) et ` +
+          `${result?.messages_synced ?? 0} message(s) synchronisés.`
+        );
+      }
+
+      await loadThreads(selectedId);
+    } catch (error) {
+      setMessage(
+        error instanceof Error
+          ? error.message
+          : "La synchronisation Gmail a échoué."
+      );
+    } finally {
+      syncInProgressRef.current = false;
+      setSyncing(false);
+    }
+  }, [userId, loadThreads, selectedId]);
+
   useEffect(() => {
     const timer = window.setTimeout(() => loadThreads(), 250);
     return () => window.clearTimeout(timer);
@@ -155,39 +189,6 @@ export default function Messagerie({ user }) {
       .catch((error) => !cancelled && setMessage(error.message));
     return () => { cancelled = true; };
   }, [selectedId, userId]);
-
-  const synchronize = useCallback(async ({ silent = false } = {}) => {
-    if (!userId || syncInProgressRef.current) return;
-
-    syncInProgressRef.current = true;
-    setSyncing(true);
-
-    if (!silent) {
-      setMessage("");
-    }
-
-    try {
-      const result = await refreshGmail(userId);
-
-      if (!silent) {
-        setMessage(
-          `${result?.threads_synced ?? 0} conversation(s) et ` +
-          `${result?.messages_synced ?? 0} message(s) synchronisés.`
-        );
-      }
-
-      await loadThreads(selectedId);
-    } catch (error) {
-      setMessage(
-        error instanceof Error
-          ? error.message
-          : "La synchronisation Gmail a échoué."
-      );
-    } finally {
-      syncInProgressRef.current = false;
-      setSyncing(false);
-    }
-  }, [userId, loadThreads, selectedId]);
 
   async function submitCompose(form) {
     setSending(true);

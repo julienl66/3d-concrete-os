@@ -9400,3 +9400,18 @@ textarea:focus {
   .crm-email-bubble { width: 96%; }
   .crm-email-conversation { padding: 12px; }
 }
+
+/* Business Intelligence — CA signé mensuel */
+.bi-section-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 20px;
+  margin-bottom: 16px;
+}
+.bi-section-head h3 { margin: 0; }
+.bi-section-head p { margin: 6px 0 0; color: var(--muted); }
+.bi-section-head > strong { font-size: 26px; white-space: nowrap; }
+.bi-monthly-table-card { margin-top: 18px; }
+.bi-project-names { margin-top: 5px; color: var(--muted); font-size: 12px; }
+.bi-monthly-table-card tfoot th { border-top: 2px solid var(--line); }

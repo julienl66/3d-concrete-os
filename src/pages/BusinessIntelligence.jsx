@@ -44,6 +44,7 @@ export default function BusinessIntelligence({ user, permissions }) {
   const [period, setPeriod] = useState("year");
   const [view, setView] = useState("direction");
   const [editMode, setEditMode] = useState(false);
+  const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
 
   const [widgetForm, setWidgetForm] = useState({
     title: "",
@@ -61,6 +62,19 @@ export default function BusinessIntelligence({ user, permissions }) {
 
   useEffect(() => {
     loadData();
+
+    const projectsChannel = supabase
+      .channel("bi-projects-live")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "projects" },
+        () => loadData()
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(projectsChannel);
+    };
   }, []);
 
   function can(action) {
@@ -339,30 +353,39 @@ export default function BusinessIntelligence({ user, permissions }) {
     stockScore * 0.10
   );
 
+  const validatedSignedProjects = useMemo(() =>
+    projects.filter((project) =>
+      project.status === "validated" && project.signed_date
+    ),
+  [projects]);
+
+  const availableYears = useMemo(() => {
+    const years = new Set([new Date().getFullYear()]);
+    validatedSignedProjects.forEach((project) => {
+      const year = new Date(project.signed_date).getFullYear();
+      if (Number.isFinite(year)) years.add(year);
+    });
+    return [...years].sort((a, b) => b - a);
+  }, [validatedSignedProjects]);
+
   const monthlyRevenue = useMemo(() => {
-    const year = new Date().getFullYear();
-
     return Array.from({ length: 12 }, (_, index) => {
-      const projectTotal = projects
-        .filter((project) => {
-          const date = new Date(project.signed_date || project.created_at);
-          return date.getFullYear() === year && date.getMonth() === index;
-        })
-        .reduce((sum, project) => sum + Number(project.sale_amount || 0), 0);
-
-      const manualTotal = revenueEntries
-        .filter((entry) => {
-          const date = new Date(entry.entry_date || entry.created_at);
-          return date.getFullYear() === year && date.getMonth() === index;
-        })
-        .reduce((sum, entry) => sum + Number(entry.amount || 0), 0);
+      const monthProjects = validatedSignedProjects.filter((project) => {
+        const date = new Date(project.signed_date);
+        return date.getFullYear() === selectedYear && date.getMonth() === index;
+      });
 
       return {
-        label: new Date(year, index, 1).toLocaleDateString("fr-FR", { month: "short" }),
-        value: projectTotal + manualTotal,
+        label: new Date(selectedYear, index, 1).toLocaleDateString("fr-FR", { month: "short" }),
+        fullLabel: new Date(selectedYear, index, 1).toLocaleDateString("fr-FR", { month: "long" }),
+        value: monthProjects.reduce((sum, project) => sum + Number(project.sale_amount || 0), 0),
+        count: monthProjects.length,
+        projects: monthProjects,
       };
     });
-  }, [projects, revenueEntries]);
+  }, [validatedSignedProjects, selectedYear]);
+
+  const selectedYearRevenue = monthlyRevenue.reduce((sum, row) => sum + row.value, 0);
 
   const maxMonthlyRevenue = Math.max(1, ...monthlyRevenue.map((row) => row.value));
 
@@ -581,6 +604,12 @@ export default function BusinessIntelligence({ user, permissions }) {
             ))}
           </select>
 
+          <select value={selectedYear} onChange={(e) => setSelectedYear(Number(e.target.value))}>
+            {availableYears.map((year) => (
+              <option key={year} value={year}>{year}</option>
+            ))}
+          </select>
+
           <button className={view === "direction" ? "btn primary" : "btn small"} onClick={() => setView("direction")}>Direction</button>
           <button className={view === "commercial" ? "btn primary" : "btn small"} onClick={() => setView("commercial")}>Commercial</button>
           <button className={view === "investors" ? "btn primary" : "btn small"} onClick={() => setView("investors")}>Investisseurs</button>
@@ -683,7 +712,13 @@ export default function BusinessIntelligence({ user, permissions }) {
 
           <div className="bi-main-grid">
             <div className="card">
-              <h3>Évolution du CA</h3>
+              <div className="bi-section-head">
+                <div>
+                  <h3>CA signé mensuel — {selectedYear}</h3>
+                  <p>Uniquement les projets validés, classés selon leur date de signature.</p>
+                </div>
+                <strong>{formatMoney(selectedYearRevenue)}</strong>
+              </div>
 
               <div className="bi-bar-chart">
                 {monthlyRevenue.map((row) => (
@@ -706,6 +741,50 @@ export default function BusinessIntelligence({ user, permissions }) {
               </div>
             </div>
           </div>
+          <div className="card bi-monthly-table-card">
+            <div className="bi-section-head">
+              <div>
+                <h3>Détail mensuel des projets signés</h3>
+                <p>La liste se met à jour automatiquement après validation d'un projet.</p>
+              </div>
+            </div>
+
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Mois</th>
+                    <th>Projets signés</th>
+                    <th>CA signé HT</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {monthlyRevenue.map((row) => (
+                    <tr key={row.fullLabel}>
+                      <td style={{ textTransform: "capitalize" }}>{row.fullLabel}</td>
+                      <td>
+                        <strong>{row.count}</strong>
+                        {row.projects.length > 0 && (
+                          <div className="bi-project-names">
+                            {row.projects.map((project) => project.name).join(" · ")}
+                          </div>
+                        )}
+                      </td>
+                      <td><strong>{formatMoney(row.value)}</strong></td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot>
+                  <tr>
+                    <th>Total {selectedYear}</th>
+                    <th>{monthlyRevenue.reduce((sum, row) => sum + row.count, 0)}</th>
+                    <th>{formatMoney(selectedYearRevenue)}</th>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          </div>
+
         </>
       )}
 

@@ -361,6 +361,28 @@ export default function Projets({ user, permissions }) {
       selectedWorkflow = workflowTemplates[selectedIndex] || suggestedWorkflow;
     }
 
+    const defaultSignatureDate = new Date().toISOString().slice(0, 10);
+    const signedDate = window.prompt(
+      "Date de signature du projet (AAAA-MM-JJ) ?",
+      defaultSignatureDate
+    );
+
+    if (signedDate === null) return;
+
+    const saleAmountInput = window.prompt(
+      "Montant du projet signé en euros HT ?",
+      "0"
+    );
+
+    if (saleAmountInput === null) return;
+
+    const saleAmount = Number(String(saleAmountInput).replace(/\s/g, "").replace(",", "."));
+
+    if (!Number.isFinite(saleAmount) || saleAmount < 0) {
+      setMessage("Le montant signé est invalide.");
+      return;
+    }
+
     const { data: project, error: projectError } = await supabase
       .from("projects")
       .insert({
@@ -373,6 +395,8 @@ export default function Projets({ user, permissions }) {
         source_request_id: request.id,
         validated_delivery_date: request.requested_delivery_date,
         validated_installation_date: request.requested_installation_date,
+        signed_date: signedDate || defaultSignatureDate,
+        sale_amount: saleAmount,
         estimated_hours: 0,
         progress_percent: 0,
         project_color: request.project_color || "#2563eb",

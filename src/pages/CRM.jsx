@@ -434,11 +434,6 @@ export default function CRM({ user, permissions }) {
     0
   );
 
-  const hotOpportunities = filteredOpenOpportunities
-    .filter((contact) => opportunityTemperature(contact) === "hot")
-    .sort((a, b) => weightedPipe(b) - weightedPipe(a))
-    .slice(0, 6);
-
   const lifecycleContacts = filteredContacts.filter((contact) => contact.status === "active" && !isLostStage(contact.stage_id));
 
   const temperatureGroups = {
@@ -464,6 +459,10 @@ export default function CRM({ user, permissions }) {
       .filter((contact) => isLostStage(contact.stage_id))
       .sort((a, b) => String(b.updated_at || b.created_at || "").localeCompare(String(a.updated_at || a.created_at || ""))),
   };
+
+  // Le tableau « Opportunités chaudes » est une retranscription stricte de la colonne Pipe Chaud.
+  // Une seule source de données évite les écarts de filtre, de tri ou de quantité entre les deux vues.
+  const hotOpportunities = temperatureGroups.hot;
 
   function temperatureAmount(key) {
     return temperatureGroups[key].reduce((sum, contact) => sum + Number(contact.estimated_amount || 0), 0);

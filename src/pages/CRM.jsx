@@ -250,6 +250,21 @@ export default function CRM({ user, permissions }) {
     return projects.filter((project) => project.crm_contact_id === contactId);
   }
 
+  function linkedProject(contact) {
+    if (!contact) return null;
+    return projects.find((project) => project.id === contact.project_id)
+      || projects.find((project) => project.crm_contact_id === contact.id)
+      || null;
+  }
+
+  function opportunityLifecycle(contact) {
+    const project = linkedProject(contact);
+    if (project?.status === "in_production") return "in_production";
+    if (project && ["validated", "planned"].includes(project.status)) return "validated";
+    if (isWonStage(contact.stage_id)) return "validated";
+    return "opportunity";
+  }
+
   function contactQuotes(contactId) {
     return quotes.filter((quote) => quote.crm_contact_id === contactId);
   }
@@ -406,16 +421,24 @@ export default function CRM({ user, permissions }) {
     .sort((a, b) => daysSinceLastActivity(b.id) - daysSinceLastActivity(a.id))
     .slice(0, 6);
 
+  const lifecycleContacts = filteredContacts.filter((contact) => !isLostStage(contact.stage_id));
+
   const temperatureGroups = {
-    hot: filteredOpenOpportunities
-      .filter((contact) => opportunityTemperature(contact) === "hot")
+    hot: lifecycleContacts
+      .filter((contact) => opportunityLifecycle(contact) === "opportunity" && opportunityTemperature(contact) === "hot")
       .sort((a, b) => opportunityScore(b) - opportunityScore(a)),
-    warm: filteredOpenOpportunities
-      .filter((contact) => opportunityTemperature(contact) === "warm")
+    warm: lifecycleContacts
+      .filter((contact) => opportunityLifecycle(contact) === "opportunity" && opportunityTemperature(contact) === "warm")
       .sort((a, b) => opportunityScore(b) - opportunityScore(a)),
-    cold: filteredOpenOpportunities
-      .filter((contact) => opportunityTemperature(contact) === "cold")
+    cold: lifecycleContacts
+      .filter((contact) => opportunityLifecycle(contact) === "opportunity" && opportunityTemperature(contact) === "cold")
       .sort((a, b) => daysSinceLastActivity(b.id) - daysSinceLastActivity(a.id)),
+    validated: lifecycleContacts
+      .filter((contact) => opportunityLifecycle(contact) === "validated")
+      .sort((a, b) => String(linkedProject(b)?.signed_date || b.updated_at || "").localeCompare(String(linkedProject(a)?.signed_date || a.updated_at || ""))),
+    in_production: lifecycleContacts
+      .filter((contact) => opportunityLifecycle(contact) === "in_production")
+      .sort((a, b) => String(linkedProject(b)?.production_start_date || b.updated_at || "").localeCompare(String(linkedProject(a)?.production_start_date || a.updated_at || ""))),
   };
 
   function temperatureAmount(key) {
@@ -718,17 +741,23 @@ export default function CRM({ user, permissions }) {
     return `${city || "PROJ"}-${new Date().getFullYear()}-${String(Math.floor(Date.now() % 10000)).padStart(4, "0")}`;
   }
 
-  async function createProjectFromOpportunity(contact) {
-    if (!contact) return;
+  async function createProjectFromOpportunity(contact, options = {}) {
+    if (!contact) return null;
 
     if (!can("can_create")) {
       setMessage("Action non autorisée.");
-      return;
+      return null;
     }
 
-    const ok = window.confirm(`Créer un projet depuis l'opportunité "${contact.company_name}" ?`);
-    if (!ok) return;
+    const existingProject = linkedProject(contact);
+    if (existingProject) return existingProject;
 
+    if (!options.skipConfirm) {
+      const ok = window.confirm(`Créer un projet depuis l'opportunité "${contact.company_name}" ?`);
+      if (!ok) return null;
+    }
+
+    const signedDate = options.signedDate || null;
     const dossierCode = contact.dossier_code || generateDossierCode();
 
     const { data: project, error } = await supabase
@@ -744,6 +773,7 @@ export default function CRM({ user, permissions }) {
         description: contact.notes || null,
         active: true,
         status: "validated",
+        signed_date: signedDate,
         estimated_hours: 0,
         progress_percent: 0,
         project_color: "#2563eb",
@@ -755,7 +785,7 @@ export default function CRM({ user, permissions }) {
 
     if (error) {
       setMessage(error.message);
-      return;
+      return null;
     }
 
     await supabase
@@ -777,18 +807,109 @@ export default function CRM({ user, permissions }) {
         project_id: project.id,
         project_code: project.project_code,
         dossier_code: dossierCode,
+        signed_date: signedDate,
         estimated_amount: Number(contact.estimated_amount || 0),
       },
       user,
     });
 
-    setSelectedContact({
-      ...contact,
-      project_id: project.id,
-      dossier_code: dossierCode,
+    setSelectedContact({ ...contact, project_id: project.id, dossier_code: dossierCode });
+    await loadData();
+    return project;
+  }
+
+  async function validateOpportunity(contact) {
+    if (!can("can_edit") || !can("can_create")) {
+      setMessage("Action non autorisée.");
+      return;
+    }
+
+    const signedDate = window.prompt(
+      "Date de signature du devis (AAAA-MM-JJ) ?",
+      todayValue()
+    );
+    if (signedDate === null) return;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(signedDate)) {
+      setMessage("La date de signature doit être au format AAAA-MM-JJ.");
+      return;
+    }
+
+    const validatedStage = stages.find((stage) => {
+      const name = pipelineDefinitionForStage(stage)?.name || stage.name;
+      return name === "Devis validé";
     });
 
-    setMessage(`Projet créé : ${project.project_code || ""} ${project.name}`);
+    if (!validatedStage) {
+      setMessage("L'étape « Devis validé » est introuvable. Réinstalle le pipeline en 12 étapes.");
+      return;
+    }
+
+    const { error: stageError } = await supabase
+      .from("crm_contacts")
+      .update({ stage_id: validatedStage.id, probability_percent: 100 })
+      .eq("id", contact.id);
+
+    if (stageError) {
+      setMessage(stageError.message);
+      return;
+    }
+
+    const project = await createProjectFromOpportunity(
+      { ...contact, stage_id: validatedStage.id, probability_percent: 100 },
+      { skipConfirm: true, signedDate }
+    );
+
+    if (!project) return;
+    setMessage("Opportunité validée et projet créé avec la date de signature.");
+    await loadData();
+  }
+
+  async function launchOpportunityProduction(contact) {
+    if (!can("can_edit")) {
+      setMessage("Action non autorisée.");
+      return;
+    }
+
+    const project = linkedProject(contact);
+    if (!project) {
+      setMessage("Aucun projet ERP n'est lié à cette opportunité.");
+      return;
+    }
+
+    const ok = window.confirm(`Lancer la production du projet "${project.name}" ?`);
+    if (!ok) return;
+
+    const productionStartDate = window.prompt(
+      "Date de lancement en production (AAAA-MM-JJ) ?",
+      todayValue()
+    );
+    if (productionStartDate === null) return;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(productionStartDate)) {
+      setMessage("La date de production doit être au format AAAA-MM-JJ.");
+      return;
+    }
+
+    const { error } = await supabase
+      .from("projects")
+      .update({ status: "in_production", production_start_date: productionStartDate })
+      .eq("id", project.id);
+
+    if (error) {
+      setMessage(error.message);
+      return;
+    }
+
+    await emitEvent({
+      event_type: "PROJECT_PRODUCTION_STARTED",
+      entity_type: "project",
+      entity_id: project.id,
+      title: `Production lancée : ${project.name}`,
+      description: contact.company_name,
+      payload: { production_start_date: productionStartDate, crm_contact_id: contact.id },
+      user,
+    });
+
+    setMessage("Le projet est passé en production.");
     await loadData();
   }
 
@@ -2053,8 +2174,12 @@ export default function CRM({ user, permissions }) {
 
       {viewMode === "temperature" && (
         <div className="crm-temperature-board">
-          {["hot", "warm", "cold"].map((key) => {
-            const meta = temperatureMeta(key);
+          {["hot", "warm", "cold", "validated", "in_production"].map((key) => {
+            const meta = key === "validated"
+              ? { label: "Validé", icon: "✅", hint: "Devis signé, en attente de production" }
+              : key === "in_production"
+                ? { label: "En production", icon: "🏭", hint: "Fabrication actuellement lancée" }
+                : temperatureMeta(key);
             const items = temperatureGroups[key];
 
             return (
@@ -2063,7 +2188,7 @@ export default function CRM({ user, permissions }) {
                   <div>
                     <span className="crm-temperature-icon">{meta.icon}</span>
                     <div>
-                      <h3>Pipe {meta.label}</h3>
+                      <h3>{["validated", "in_production"].includes(key) ? meta.label : `Pipe ${meta.label}`}</h3>
                       <p>{meta.hint}</p>
                     </div>
                   </div>
@@ -2087,12 +2212,20 @@ export default function CRM({ user, permissions }) {
                               <strong>{contact.company_name}</strong>
                               <small>{stageName(contact.stage_id)} · {employeeName(contact.assigned_to)}</small>
                             </div>
-                            <span className={`crm-score-badge ${key}`}>{opportunityScore(contact)}</span>
+                            <span className={`crm-score-badge ${key}`}>
+                              {key === "validated" ? "✓" : key === "in_production" ? "🏭" : opportunityScore(contact)}
+                            </span>
                           </div>
 
                           <div className="crm-temperature-money">
                             <strong>{formatMoney(contact.estimated_amount || 0)}</strong>
-                            <span>{Number(contact.probability_percent || contact.probability || 0)} % · pondéré {formatMoney(weightedPipe(contact))}</span>
+                            <span>
+                              {key === "validated"
+                                ? `Signé le ${linkedProject(contact)?.signed_date || "date non définie"}`
+                                : key === "in_production"
+                                  ? `Démarré le ${linkedProject(contact)?.production_start_date || "date non définie"}`
+                                  : `${Number(contact.probability_percent || contact.probability || 0)} % · pondéré ${formatMoney(weightedPipe(contact))}`}
+                            </span>
                           </div>
 
                           <div className="crm-temperature-meta">
@@ -2107,8 +2240,17 @@ export default function CRM({ user, permissions }) {
                           </div>
 
                           <div className="crm-temperature-actions">
-                            <button className="btn small" onClick={(e) => { e.stopPropagation(); openPhone(contact); }}>Appeler</button>
-                            <button className="btn small" onClick={(e) => { e.stopPropagation(); openEmail(contact); }}>Email</button>
+                            {key === "validated" ? (
+                              <button className="btn small primary" onClick={(e) => { e.stopPropagation(); launchOpportunityProduction(contact); }}>Lancer la production</button>
+                            ) : key === "in_production" ? (
+                              <span className="crm-production-state">Production en cours</span>
+                            ) : (
+                              <>
+                                <button className="btn small" onClick={(e) => { e.stopPropagation(); openPhone(contact); }}>Appeler</button>
+                                <button className="btn small" onClick={(e) => { e.stopPropagation(); openEmail(contact); }}>Email</button>
+                                <button className="btn small primary" onClick={(e) => { e.stopPropagation(); validateOpportunity(contact); }}>Valider</button>
+                              </>
+                            )}
                             <button className="btn small" onClick={(e) => { e.stopPropagation(); setSelectedContact(contact); }}>Ouvrir</button>
                           </div>
                         </article>

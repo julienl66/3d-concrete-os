@@ -9449,7 +9449,7 @@ textarea:focus {
 
 .crm-temperature-board {
   display: grid;
-  grid-template-columns: repeat(3, minmax(300px, 1fr));
+  grid-template-columns: repeat(5, minmax(290px, 1fr));
   gap: 18px;
   align-items: start;
 }
@@ -9474,6 +9474,8 @@ textarea:focus {
 .crm-temperature-column.hot > header { border-top: 5px solid #dc2626; }
 .crm-temperature-column.warm > header { border-top: 5px solid #f59e0b; }
 .crm-temperature-column.cold > header { border-top: 5px solid #2563eb; }
+.crm-temperature-column.validated > header { border-top: 5px solid #16a34a; }
+.crm-temperature-column.in_production > header { border-top: 5px solid #7c3aed; }
 .crm-temperature-icon { font-size: 28px; }
 .crm-temperature-column-kpis { text-align: right; }
 .crm-temperature-column-kpis strong { display: block; font-size: 24px; }
@@ -9496,6 +9498,8 @@ textarea:focus {
 .crm-score-badge.hot { background: #fee2e2; color: #991b1b; }
 .crm-score-badge.warm { background: #fef3c7; color: #92400e; }
 .crm-score-badge.cold { background: #dbeafe; color: #1e40af; }
+.crm-score-badge.validated { background: #dcfce7; color: #166534; }
+.crm-score-badge.in_production { background: #ede9fe; color: #5b21b6; }
 .crm-temperature-money { margin: 13px 0 10px; display: flex; justify-content: space-between; gap: 8px; align-items: end; }
 .crm-temperature-money > strong { font-size: 20px; }
 .crm-temperature-money > span { color: #64748b; font-size: 12px; text-align: right; }
@@ -9506,12 +9510,14 @@ textarea:focus {
 .crm-next-action strong { font-size: 13px; }
 .crm-next-action small { color: #64748b; }
 .crm-next-action.late { background: #fff1f2; color: #9f1239; }
-.crm-temperature-actions { display: flex; gap: 7px; margin-top: 12px; }
+.crm-temperature-actions { display: flex; gap: 7px; margin-top: 12px; flex-wrap: wrap; }
+.crm-production-state { flex: 1; padding: 8px 10px; border-radius: 9px; background: #ede9fe; color: #5b21b6; font-size: 12px; font-weight: 800; text-align: center; }
 .crm-card-title-row { display: flex; justify-content: space-between; gap: 8px; align-items: start; }
 .crm-temperature-badge { border-radius: 999px; padding: 4px 7px; font-size: 10px; font-weight: 800; white-space: nowrap; }
 .crm-temperature-badge.hot { background: #fee2e2; color: #991b1b; }
 .crm-temperature-badge.warm { background: #fef3c7; color: #92400e; }
 .crm-temperature-badge.cold { background: #dbeafe; color: #1e40af; }
+@media (min-width: 1151px) { .crm-temperature-board { overflow-x: auto; } }
 @media (max-width: 1150px) { .crm-temperature-board { grid-template-columns: 1fr; } .crm-temperature-list { max-height: none; } }
 
 /* CRM — pipeline commercial officiel en 12 étapes */

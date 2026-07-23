@@ -47,6 +47,8 @@ export default function CRM({ user, permissions }) {
   const [activeCall, setActiveCall] = useState(null);
   const [manualProjectColumn, setManualProjectColumn] = useState(null);
   const [manualProjectId, setManualProjectId] = useState("");
+  const [poolAddTarget, setPoolAddTarget] = useState(null);
+  const [poolAddContactId, setPoolAddContactId] = useState("");
 
   const [contactForm, setContactForm] = useState({
     company_name: "",
@@ -344,7 +346,9 @@ export default function CRM({ user, permissions }) {
   }
 
   function isPipelineContact(contact) {
-    return contact?.status === "active" && hasExplicitPipelineEntry(contact);
+    if (!contact) return false;
+    if (linkedProject(contact) || isWonStage(contact.stage_id) || isLostStage(contact.stage_id)) return true;
+    return contact.status === "active" && Boolean(contact.stage_id);
   }
 
   const filteredContacts = useMemo(() => {
@@ -1503,6 +1507,110 @@ export default function CRM({ user, permissions }) {
 
     setMessage("Opportunité créée. Le prospect apparaît maintenant dans le pipeline.");
     await loadData();
+  }
+
+  async function addProspectFromPool(target) {
+    if (!can("can_edit")) {
+      setMessage("Action non autorisée.");
+      return;
+    }
+
+    const contact = prospectPool.find((item) => item.id === poolAddContactId);
+    if (!contact) {
+      setMessage("Sélectionne un prospect dans le vivier.");
+      return;
+    }
+
+    const orderedStages = [...stages]
+      .filter((stage) => !String(stage.name || "").toLowerCase().includes("perdu"))
+      .sort((a, b) => Number(a.stage_order || 0) - Number(b.stage_order || 0));
+    const firstStage = orderedStages[0];
+
+    let stage = firstStage;
+    let probability = Number(firstStage?.default_probability_percent ?? 5);
+    let destination = "Suspect ciblé";
+
+    if (target?.type === "stage") {
+      stage = stages.find((item) => item.id === target.value) || firstStage;
+      const definition = pipelineDefinitionForStage(stage);
+      probability = Number(definition?.probability ?? stage?.default_probability_percent ?? 5);
+      destination = stage?.name || "pipeline";
+    } else if (target?.type === "temperature") {
+      const temperatureSettings = {
+        hot: { probability: 100, label: "Pipe chaud" },
+        warm: { probability: 55, label: "Pipe tiède" },
+        cold: { probability: 20, label: "Pipe froid" },
+      };
+      const settings = temperatureSettings[target.value] || temperatureSettings.cold;
+      probability = settings.probability;
+      destination = settings.label;
+    }
+
+    if (!stage) {
+      setMessage("Aucune étape commerciale n'est configurée.");
+      return;
+    }
+
+    const { error } = await supabase
+      .from("crm_contacts")
+      .update({
+        status: "active",
+        stage_id: stage.id,
+        probability_percent: probability,
+      })
+      .eq("id", contact.id);
+
+    if (error) {
+      setMessage(error.message);
+      return;
+    }
+
+    await supabase.from("crm_interactions").insert({
+      contact_id: contact.id,
+      interaction_type: "note",
+      subject: `Opportunité créée depuis le vivier — ${destination}`,
+      notes: `Le prospect a été ajouté manuellement depuis le vivier dans ${destination}.`,
+      priority: "normal",
+      created_by: user?.id || null,
+    });
+
+    setPoolAddTarget(null);
+    setPoolAddContactId("");
+    setMessage(`${contact.company_name || "Le prospect"} a été ajouté dans ${destination}.`);
+    await loadData();
+  }
+
+  function poolAdder(target) {
+    const key = `${target.type}:${target.value}`;
+    const isOpen = poolAddTarget === key;
+
+    return (
+      <div className="crm-manual-project-link">
+        {isOpen ? (
+          <>
+            <select value={poolAddContactId} onChange={(e) => setPoolAddContactId(e.target.value)}>
+              <option value="">Sélectionner un prospect du vivier</option>
+              {prospectPool.map((contact) => (
+                <option key={contact.id} value={contact.id}>
+                  {contact.company_name}{contact.city ? ` — ${contact.city}` : ""}
+                </option>
+              ))}
+            </select>
+            <div>
+              <button className="btn small primary" onClick={() => addProspectFromPool(target)}>Ajouter</button>
+              <button className="btn small" onClick={() => { setPoolAddTarget(null); setPoolAddContactId(""); }}>Annuler</button>
+            </div>
+          </>
+        ) : (
+          <button
+            className="btn small crm-add-existing-project"
+            onClick={() => { setPoolAddTarget(key); setPoolAddContactId(""); }}
+          >
+            + Ajouter depuis le vivier
+          </button>
+        )}
+      </div>
+    );
   }
 
   async function initializeProspectPool() {
@@ -2708,6 +2816,8 @@ export default function CRM({ user, permissions }) {
                   </div>
                 </header>
 
+                {["hot", "warm", "cold"].includes(key) && poolAdder({ type: "temperature", value: key })}
+
                 {["validated", "in_production"].includes(key) && (
                   <div className="crm-manual-project-link">
                     {manualProjectColumn === key ? (
@@ -2842,6 +2952,8 @@ export default function CRM({ user, permissions }) {
                       <small>{formatMoney(metrics.weighted)} pondéré</small>
                     </div>
                   </div>
+
+                  {poolAdder({ type: "stage", value: stage.id })}
 
                   <div className="crm-column-body">
                     {stageContacts.map(contactCard)}

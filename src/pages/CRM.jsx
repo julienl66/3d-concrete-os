@@ -333,7 +333,15 @@ export default function CRM({ user, permissions }) {
 
     const firstStage = firstCommercialStage();
     const currentStage = stages.find((stage) => stage.id === contact.stage_id);
+    const currentProbability = Number(contact.probability_percent ?? contact.probability ?? 0);
+    const defaultFirstStageProbability = Number(firstStage?.default_probability_percent ?? 5);
+
+    // Une étape plus avancée que « Suspect ciblé » constitue une entrée volontaire dans le pipeline.
     if (currentStage && firstStage && Number(currentStage.stage_order || 0) > Number(firstStage.stage_order || 0)) return true;
+
+    // Une probabilité réellement qualifiée conserve les opportunités chaudes, tièdes ou froides existantes.
+    // La valeur automatique de l'étape « Suspect ciblé » (généralement 5 %) ne suffit pas à sortir le contact du vivier.
+    if (currentProbability > defaultFirstStageProbability) return true;
 
     return contactInteractions(contact.id).some((item) => {
       const type = String(item.interaction_type || "").toLowerCase();
@@ -341,14 +349,14 @@ export default function CRM({ user, permissions }) {
       return ["appel", "email", "rdv", "devis", "relance"].includes(type)
         || subject.includes("prospect ciblé")
         || subject.includes("opportunité créée")
-        || subject.includes("qualifiée par probabilité");
+        || subject.includes("qualifiée par probabilité")
+        || subject.includes("ajouté manuellement depuis le vivier");
     });
   }
 
   function isPipelineContact(contact) {
     if (!contact) return false;
-    if (linkedProject(contact) || isWonStage(contact.stage_id) || isLostStage(contact.stage_id)) return true;
-    return contact.status === "active" && Boolean(contact.stage_id);
+    return hasExplicitPipelineEntry(contact);
   }
 
   const filteredContacts = useMemo(() => {

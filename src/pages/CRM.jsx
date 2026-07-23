@@ -208,7 +208,9 @@ export default function CRM({ user, permissions }) {
   }
 
   function pipelineIsConfigured() {
-    const ordered = [...stages].sort((a, b) => Number(a.stage_order || 0) - Number(b.stage_order || 0));
+    const ordered = [...stages]
+      .filter((stage) => !String(stage.name || "").toLowerCase().includes("perdu"))
+      .sort((a, b) => Number(a.stage_order || 0) - Number(b.stage_order || 0));
     return ordered.length === COMMERCIAL_PIPELINE.length && ordered.every((stage, index) => stage.name === COMMERCIAL_PIPELINE[index].name);
   }
 
@@ -440,6 +442,9 @@ export default function CRM({ user, permissions }) {
     production_completed: lifecycleContacts
       .filter((contact) => opportunityLifecycle(contact) === "production_completed")
       .sort((a, b) => String(linkedProject(b)?.production_end_date || b.updated_at || "").localeCompare(String(linkedProject(a)?.production_end_date || a.updated_at || ""))),
+    lost: filteredContacts
+      .filter((contact) => isLostStage(contact.stage_id))
+      .sort((a, b) => String(b.updated_at || b.created_at || "").localeCompare(String(a.updated_at || a.created_at || ""))),
   };
 
   function temperatureAmount(key) {
@@ -819,39 +824,97 @@ export default function CRM({ user, permissions }) {
     return project;
   }
 
+  async function ensureLostStage() {
+    const existing = stages.find((stage) => String(stage.name || "").toLowerCase().includes("perdu"));
+    if (existing) return existing;
+
+    const nextOrder = Math.max(0, ...stages.map((stage) => Number(stage.stage_order || 0))) + 1;
+    const { data, error } = await supabase
+      .from("crm_pipeline_stages")
+      .insert({
+        name: "Perdu",
+        color: "#dc2626",
+        stage_order: nextOrder,
+        default_probability_percent: 0,
+        active: true,
+      })
+      .select()
+      .single();
+
+    if (error) throw error;
+    setStages((current) => [...current, data]);
+    return data;
+  }
+
   async function exitOpportunity(contact) {
     if (!can("can_edit")) {
       setMessage("Action non autorisée.");
       return;
     }
 
-    const lostStage = stages.find((stage) => {
-      const name = pipelineDefinitionForStage(stage)?.name || stage.name;
-      return String(name || "").toLowerCase().includes("perdu");
-    });
+    const reason = window.prompt(
+      `Motif de perte pour « ${contact.company_name} » (facultatif) :`,
+      ""
+    );
+    if (reason === null) return;
 
-    if (!lostStage) {
-      setMessage("L'étape « Perdu » est introuvable dans le pipeline.");
+    const lostDate = todayValue();
+
+    try {
+      const lostStage = await ensureLostStage();
+      const previousNotes = String(contact.notes || "").trim();
+      const lossLine = `[PERDU ${lostDate}] ${reason?.trim() || "Motif non renseigné"}`;
+
+      const { error } = await supabase
+        .from("crm_contacts")
+        .update({
+          stage_id: lostStage.id,
+          probability_percent: 0,
+          notes: previousNotes ? `${previousNotes}\n${lossLine}` : lossLine,
+        })
+        .eq("id", contact.id);
+
+      if (error) throw error;
+
+      const { error: interactionError } = await supabase.from("crm_interactions").insert({
+        contact_id: contact.id,
+        interaction_type: "note",
+        subject: "Opportunité classée perdue",
+        notes: reason?.trim() || "Motif non renseigné",
+        priority: "normal",
+        created_by: user?.id || null,
+      });
+
+      if (interactionError) {
+        setMessage(`Opportunité classée perdue, mais historique non créé : ${interactionError.message}`);
+      } else {
+        setMessage("Opportunité classée dans les dossiers perdus.");
+      }
+
+      if (selectedContact?.id === contact.id) setSelectedContact(null);
+      await loadData();
+    } catch (error) {
+      setMessage(error.message || "Impossible de classer l'opportunité en perdu.");
+    }
+  }
+
+  async function deleteOpportunityDirectly(contact) {
+    if (!can("can_delete")) {
+      setMessage("Action non autorisée.");
       return;
     }
 
-    const ok = window.confirm(
-      `Sortir l'opportunité « ${contact.company_name} » du pipeline actif ? Elle sera classée dans les opportunités perdues.`
-    );
+    const ok = window.confirm(`Supprimer définitivement « ${contact.company_name} » du CRM ?`);
     if (!ok) return;
 
-    const { error } = await supabase
-      .from("crm_contacts")
-      .update({ stage_id: lostStage.id, probability_percent: 0 })
-      .eq("id", contact.id);
-
+    const { error } = await supabase.from("crm_contacts").delete().eq("id", contact.id);
     if (error) {
       setMessage(error.message);
       return;
     }
 
-    setMessage("Opportunité sortie du pipeline actif.");
     if (selectedContact?.id === contact.id) setSelectedContact(null);
+    setMessage("Opportunité supprimée définitivement.");
     await loadData();
   }
 
@@ -2245,7 +2308,8 @@ export default function CRM({ user, permissions }) {
                 </button>
                 <div className="crm-focus-actions">
                   <button className="btn small primary" onClick={() => validateOpportunity(contact)}>Valider</button>
-                  <button className="btn small danger-outline" onClick={() => exitOpportunity(contact)}>Sortir</button>
+                  <button className="btn small danger-outline" onClick={() => exitOpportunity(contact)}>Classer perdu</button>
+                  <button className="btn small danger-soft" onClick={() => deleteOpportunityDirectly(contact)}>Supprimer</button>
                 </div>
               </div>
             ))
@@ -2372,14 +2436,16 @@ export default function CRM({ user, permissions }) {
 
       {viewMode === "temperature" && (
         <div className="crm-temperature-board">
-          {["hot", "warm", "cold", "validated", "in_production", "production_completed"].map((key) => {
+          {["hot", "warm", "cold", "validated", "in_production", "production_completed", "lost"].map((key) => {
             const meta = key === "validated"
               ? { label: "Validé", icon: "✅", hint: "Devis signé, en attente de production" }
               : key === "in_production"
                 ? { label: "En production", icon: "🏭", hint: "Fabrication actuellement lancée" }
                 : key === "production_completed"
                   ? { label: "Production terminée", icon: "✅", hint: "Fabrication achevée, projet prêt" }
-                  : temperatureMeta(key);
+                  : key === "lost"
+                    ? { label: "Perdus", icon: "❌", hint: "Opportunités sorties du pipeline actif" }
+                    : temperatureMeta(key);
             const items = temperatureGroups[key];
 
             return (
@@ -2388,7 +2454,7 @@ export default function CRM({ user, permissions }) {
                   <div>
                     <span className="crm-temperature-icon">{meta.icon}</span>
                     <div>
-                      <h3>{["validated", "in_production", "production_completed"].includes(key) ? meta.label : `Pipe ${meta.label}`}</h3>
+                      <h3>{["validated", "in_production", "production_completed", "lost"].includes(key) ? meta.label : `Pipe ${meta.label}`}</h3>
                       <p>{meta.hint}</p>
                     </div>
                   </div>
@@ -2434,7 +2500,7 @@ export default function CRM({ user, permissions }) {
                               <small>{stageName(contact.stage_id)} · {employeeName(contact.assigned_to)}</small>
                             </div>
                             <span className={`crm-score-badge ${key}`}>
-                              {key === "validated" ? "✓" : key === "in_production" ? "🏭" : key === "production_completed" ? "✅" : opportunityScore(contact)}
+                              {key === "validated" ? "✓" : key === "in_production" ? "🏭" : key === "production_completed" ? "✅" : key === "lost" ? "✕" : opportunityScore(contact)}
                             </span>
                           </div>
 
@@ -2467,12 +2533,15 @@ export default function CRM({ user, permissions }) {
                               <button className="btn small primary" onClick={(e) => { e.stopPropagation(); completeOpportunityProduction(contact); }}>Terminer la production</button>
                             ) : key === "production_completed" ? (
                               <span className="crm-production-state completed">Projet prêt</span>
+                            ) : key === "lost" ? (
+                              <button className="btn small danger-soft" onClick={(e) => { e.stopPropagation(); deleteOpportunityDirectly(contact); }}>Supprimer définitivement</button>
                             ) : (
                               <>
                                 <button className="btn small" onClick={(e) => { e.stopPropagation(); openPhone(contact); }}>Appeler</button>
                                 <button className="btn small" onClick={(e) => { e.stopPropagation(); openEmail(contact); }}>Email</button>
                                 <button className="btn small primary" onClick={(e) => { e.stopPropagation(); validateOpportunity(contact); }}>Valider</button>
-                                <button className="btn small danger-outline" onClick={(e) => { e.stopPropagation(); exitOpportunity(contact); }}>Sortir</button>
+                                <button className="btn small danger-outline" onClick={(e) => { e.stopPropagation(); exitOpportunity(contact); }}>Classer perdu</button>
+                                <button className="btn small danger-soft" onClick={(e) => { e.stopPropagation(); deleteOpportunityDirectly(contact); }}>Supprimer</button>
                               </>
                             )}
                             <button className="btn small" onClick={(e) => { e.stopPropagation(); setSelectedContact(contact); }}>Ouvrir</button>

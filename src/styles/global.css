@@ -9655,3 +9655,13 @@ textarea:focus {
     justify-content: flex-end;
   }
 }
+
+.crm-temperature-column.lost {
+  border-color: rgba(220, 38, 38, 0.22);
+  background: linear-gradient(180deg, rgba(254, 242, 242, 0.7), rgba(255, 255, 255, 0.96));
+}
+
+.crm-score-badge.lost {
+  background: rgba(220, 38, 38, 0.1);
+  color: #b91c1c;
+}

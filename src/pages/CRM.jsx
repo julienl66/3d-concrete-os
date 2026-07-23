@@ -30,6 +30,7 @@ export default function CRM({ user, permissions }) {
   const [interactions, setInteractions] = useState([]);
   const [projects, setProjects] = useState([]);
   const [quotes, setQuotes] = useState([]);
+  const [contactOpportunities, setContactOpportunities] = useState([]);
   const [selectedContact, setSelectedContact] = useState(null);
   const [opportunityForm, setOpportunityForm] = useState(null);
   const [draggedContactId, setDraggedContactId] = useState(null);
@@ -49,6 +50,14 @@ export default function CRM({ user, permissions }) {
   const [manualProjectId, setManualProjectId] = useState("");
   const [poolAddTarget, setPoolAddTarget] = useState(null);
   const [poolAddContactId, setPoolAddContactId] = useState("");
+  const [multiOpportunityForm, setMultiOpportunityForm] = useState({
+    title: "",
+    estimated_amount: "",
+    probability_percent: "",
+    expected_signature_month: "",
+    status: "open",
+    notes: "",
+  });
 
   const [contactForm, setContactForm] = useState({
     company_name: "",
@@ -180,6 +189,15 @@ export default function CRM({ user, permissions }) {
     setInteractions(interactionsResponse.data || []);
     setProjects(projectsResponse.data || []);
     setQuotes(quotesResponse.data || []);
+
+    const opportunitiesResponse = await supabase
+      .from("crm_contact_opportunities")
+      .select("*")
+      .order("created_at", { ascending: false });
+
+    if (!opportunitiesResponse.error) {
+      setContactOpportunities(opportunitiesResponse.data || []);
+    }
   }
 
   function can(action) {
@@ -328,42 +346,29 @@ export default function CRM({ user, permissions }) {
 
   function hasExplicitPipelineEntry(contact) {
     if (!contact) return false;
-
-    // Les dossiers déjà transformés en projet ou classés gagnés/perdus restent toujours visibles.
     if (linkedProject(contact) || isWonStage(contact.stage_id) || isLostStage(contact.stage_id)) return true;
-
-    // Un contact du vivier n'entre jamais automatiquement dans le pipeline.
     if (contact.status !== "active" || !contact.stage_id) return false;
 
     const firstStage = firstCommercialStage();
     const currentStage = stages.find((stage) => stage.id === contact.stage_id);
     const currentProbability = Number(contact.probability_percent ?? contact.probability ?? 0);
+    const defaultFirstStageProbability = Number(firstStage?.default_probability_percent ?? 5);
 
-    // Une étape réellement avancée prouve que le dossier a été travaillé commercialement.
+    // Une étape plus avancée que « Suspect ciblé » constitue une entrée volontaire dans le pipeline.
     if (currentStage && firstStage && Number(currentStage.stage_order || 0) > Number(firstStage.stage_order || 0)) return true;
 
-    // On conserve les opportunités chaudes et tièdes historiques. Les anciennes valeurs par défaut
-    // de 5 %, 20 % ou 30 % ne suffisent plus à transformer tout le vivier en pipe froid.
-    if (currentProbability >= 40) return true;
+    // Une probabilité réellement qualifiée conserve les opportunités chaudes, tièdes ou froides existantes.
+    // La valeur automatique de l'étape « Suspect ciblé » (généralement 5 %) ne suffit pas à sortir le contact du vivier.
+    if (currentProbability > defaultFirstStageProbability) return true;
 
     return contactInteractions(contact.id).some((item) => {
-      const type = String(item.interaction_type || "").trim().toLowerCase();
-      const subject = String(item.subject || "").trim().toLowerCase();
-
-      // Ces libellés sont créés uniquement lors d'un ajout volontaire depuis le vivier.
-      const explicitManualEntry =
-        subject.includes("prospect ciblé — opportunité créée")
-        || subject.includes("opportunité créée depuis le vivier")
-        || subject.includes("ajouté manuellement depuis le vivier")
-        || subject.includes("qualifiée par probabilité");
-
-      if (explicitManualEntry) return true;
-
-      // Les relances générées par l'import CSV ne doivent pas créer 900 opportunités.
-      if (subject === "import csv" || subject.startsWith("import csv")) return false;
-
-      // Une vraie action commerciale enregistrée manuellement crée bien une opportunité.
-      return ["appel", "email", "rdv", "devis"].includes(type);
+      const type = String(item.interaction_type || "").toLowerCase();
+      const subject = String(item.subject || "").toLowerCase();
+      return ["appel", "email", "rdv", "devis", "relance"].includes(type)
+        || subject.includes("prospect ciblé")
+        || subject.includes("opportunité créée")
+        || subject.includes("qualifiée par probabilité")
+        || subject.includes("ajouté manuellement depuis le vivier");
     });
   }
 
@@ -1488,6 +1493,67 @@ export default function CRM({ user, permissions }) {
     });
 
     setMessage("Prospect ajouté au vivier CRM.");
+    await loadData();
+  }
+
+  function opportunitiesForContact(contactId) {
+    return contactOpportunities.filter((item) => item.contact_id === contactId);
+  }
+
+  async function addContactOpportunity(event) {
+    event.preventDefault();
+    if (!selectedContact || !multiOpportunityForm.title.trim()) {
+      setMessage("Indique un nom pour l’opportunité.");
+      return;
+    }
+
+    const { error } = await supabase.from("crm_contact_opportunities").insert({
+      contact_id: selectedContact.id,
+      title: multiOpportunityForm.title.trim(),
+      estimated_amount: Number(multiOpportunityForm.estimated_amount || 0),
+      probability_percent: multiOpportunityForm.probability_percent === "" ? null : Number(multiOpportunityForm.probability_percent),
+      expected_signature_month: multiOpportunityForm.expected_signature_month || null,
+      status: multiOpportunityForm.status || "open",
+      notes: multiOpportunityForm.notes || null,
+      created_by: user?.id || null,
+    });
+
+    if (error) {
+      setMessage(error.message);
+      return;
+    }
+
+    setMultiOpportunityForm({ title: "", estimated_amount: "", probability_percent: "", expected_signature_month: "", status: "open", notes: "" });
+    setMessage("Nouvelle opportunité ajoutée au prospect.");
+    await loadData();
+  }
+
+  async function updateContactOpportunityStatus(opportunity, status) {
+    const { error } = await supabase
+      .from("crm_contact_opportunities")
+      .update({ status, updated_at: new Date().toISOString() })
+      .eq("id", opportunity.id);
+    if (error) setMessage(error.message);
+    else await loadData();
+  }
+
+  async function sendContactOpportunityToPipeline(opportunity) {
+    const firstStage = firstCommercialStage();
+    if (!firstStage || !selectedContact) return;
+    const { error } = await supabase.from("crm_contacts").update({
+      status: "active",
+      stage_id: firstStage.id,
+      estimated_amount: Number(opportunity.estimated_amount || 0),
+      probability_percent: Number(opportunity.probability_percent ?? firstStage.default_probability_percent ?? 5),
+      expected_signature_month: opportunity.expected_signature_month || null,
+      notes: [selectedContact.notes, `Opportunité active : ${opportunity.title}`].filter(Boolean).join("\n"),
+    }).eq("id", selectedContact.id);
+    if (error) {
+      setMessage(error.message);
+      return;
+    }
+    await supabase.from("crm_contact_opportunities").update({ status: "active", updated_at: new Date().toISOString() }).eq("id", opportunity.id);
+    setMessage(`« ${opportunity.title} » est maintenant l’opportunité active du pipeline.`);
     await loadData();
   }
 
@@ -3127,6 +3193,46 @@ export default function CRM({ user, permissions }) {
                 Créer projet
               </button>
             </div>
+
+
+            <section className="card" style={{ marginBottom: 18 }}>
+              <div className="section-head">
+                <div>
+                  <h4>Opportunités du prospect</h4>
+                  <small>Plusieurs projets potentiels peuvent être suivis sans dupliquer la fiche contact.</small>
+                </div>
+              </div>
+
+              <div style={{ display: "grid", gap: 10, marginBottom: 14 }}>
+                {opportunitiesForContact(selectedContact.id).length === 0 && <small>Aucune opportunité complémentaire.</small>}
+                {opportunitiesForContact(selectedContact.id).map((item) => (
+                  <div key={item.id} style={{ border: "1px solid var(--border)", borderRadius: 10, padding: 12 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+                      <div>
+                        <strong>{item.title}</strong>
+                        <div><small>{formatMoney(item.estimated_amount)} · {item.probability_percent ?? 0}% · {item.status}</small></div>
+                      </div>
+                      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                        {item.status !== "active" && item.status !== "won" && item.status !== "lost" && (
+                          <button type="button" className="btn small primary" onClick={() => sendContactOpportunityToPipeline(item)}>Mettre dans le pipeline</button>
+                        )}
+                        <button type="button" className="btn small" onClick={() => updateContactOpportunityStatus(item, "won")}>Validée</button>
+                        <button type="button" className="btn small danger-soft" onClick={() => updateContactOpportunityStatus(item, "lost")}>Perdue</button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <form onSubmit={addContactOpportunity} className="crm-drawer-grid">
+                <div><label>Nom du projet potentiel</label><input value={multiOpportunityForm.title} onChange={(e) => setMultiOpportunityForm({ ...multiOpportunityForm, title: e.target.value })} placeholder="Ex. Banc du centre-ville" /></div>
+                <div><label>Montant estimé HT</label><input type="number" value={multiOpportunityForm.estimated_amount} onChange={(e) => setMultiOpportunityForm({ ...multiOpportunityForm, estimated_amount: e.target.value })} /></div>
+                <div><label>Probabilité %</label><input type="number" min="0" max="100" value={multiOpportunityForm.probability_percent} onChange={(e) => setMultiOpportunityForm({ ...multiOpportunityForm, probability_percent: e.target.value })} /></div>
+                <div><label>Signature prévue</label><input type="month" value={multiOpportunityForm.expected_signature_month} onChange={(e) => setMultiOpportunityForm({ ...multiOpportunityForm, expected_signature_month: e.target.value })} /></div>
+                <div className="crm-drawer-full"><label>Notes</label><textarea value={multiOpportunityForm.notes} onChange={(e) => setMultiOpportunityForm({ ...multiOpportunityForm, notes: e.target.value })} /></div>
+                <div className="crm-drawer-full"><button className="btn primary">+ Ajouter une opportunité</button></div>
+              </form>
+            </section>
 
             <form className="crm-drawer-form" onSubmit={saveOpportunity}>
               <section>

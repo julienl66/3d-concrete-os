@@ -419,11 +419,6 @@ export default function CRM({ user, permissions }) {
     .sort((a, b) => weightedPipe(b) - weightedPipe(a))
     .slice(0, 6);
 
-  const staleOpportunities = filteredOpenOpportunities
-    .filter((contact) => daysSinceLastActivity(contact.id) >= 21)
-    .sort((a, b) => daysSinceLastActivity(b.id) - daysSinceLastActivity(a.id))
-    .slice(0, 6);
-
   const lifecycleContacts = filteredContacts.filter((contact) => !isLostStage(contact.stage_id));
 
   const temperatureGroups = {
@@ -822,6 +817,42 @@ export default function CRM({ user, permissions }) {
     setSelectedContact({ ...contact, project_id: project.id, dossier_code: dossierCode });
     await loadData();
     return project;
+  }
+
+  async function exitOpportunity(contact) {
+    if (!can("can_edit")) {
+      setMessage("Action non autorisée.");
+      return;
+    }
+
+    const lostStage = stages.find((stage) => {
+      const name = pipelineDefinitionForStage(stage)?.name || stage.name;
+      return String(name || "").toLowerCase().includes("perdu");
+    });
+
+    if (!lostStage) {
+      setMessage("L'étape « Perdu » est introuvable dans le pipeline.");
+      return;
+    }
+
+    const ok = window.confirm(
+      `Sortir l'opportunité « ${contact.company_name} » du pipeline actif ? Elle sera classée dans les opportunités perdues.`
+    );
+    if (!ok) return;
+
+    const { error } = await supabase
+      .from("crm_contacts")
+      .update({ stage_id: lostStage.id, probability_percent: 0 })
+      .eq("id", contact.id);
+
+    if (error) {
+      setMessage(error.message);
+      return;
+    }
+
+    setMessage("Opportunité sortie du pipeline actif.");
+    if (selectedContact?.id === contact.id) setSelectedContact(null);
+    await loadData();
   }
 
   async function validateOpportunity(contact) {
@@ -2197,37 +2228,26 @@ export default function CRM({ user, permissions }) {
         </div>
       </div>
 
-      <div className="crm-focus-grid">
+      <div className="crm-focus-grid crm-focus-grid-single">
         <div className="card">
           <h3>🔥 Opportunités chaudes</h3>
           {hotOpportunities.length === 0 ? (
             <p>Aucune opportunité chaude dans ce filtre.</p>
           ) : (
             hotOpportunities.map((contact) => (
-              <button className="crm-focus-row" key={contact.id} onClick={() => setSelectedContact(contact)}>
-                <div>
-                  <strong>{contact.company_name}</strong>
-                  <small>{stageName(contact.stage_id)} · {employeeName(contact.assigned_to)}</small>
+              <div className="crm-focus-row crm-focus-row-with-actions" key={contact.id}>
+                <button className="crm-focus-main" onClick={() => setSelectedContact(contact)}>
+                  <div>
+                    <strong>{contact.company_name}</strong>
+                    <small>{stageName(contact.stage_id)} · {employeeName(contact.assigned_to)}</small>
+                  </div>
+                  <span>{formatMoney(weightedPipe(contact))}</span>
+                </button>
+                <div className="crm-focus-actions">
+                  <button className="btn small primary" onClick={() => validateOpportunity(contact)}>Valider</button>
+                  <button className="btn small danger-outline" onClick={() => exitOpportunity(contact)}>Sortir</button>
                 </div>
-                <span>{formatMoney(weightedPipe(contact))}</span>
-              </button>
-            ))
-          )}
-        </div>
-
-        <div className="card">
-          <h3>⚠ Dossiers sans activité</h3>
-          {staleOpportunities.length === 0 ? (
-            <p>Aucun dossier bloqué à plus de 21 jours.</p>
-          ) : (
-            staleOpportunities.map((contact) => (
-              <button className="crm-focus-row" key={contact.id} onClick={() => setSelectedContact(contact)}>
-                <div>
-                  <strong>{contact.company_name}</strong>
-                  <small>{daysSinceLastActivity(contact.id)} jours sans activité · {employeeName(contact.assigned_to)}</small>
-                </div>
-                <span>{formatMoney(contact.estimated_amount || 0)}</span>
-              </button>
+              </div>
             ))
           )}
         </div>
@@ -2452,6 +2472,7 @@ export default function CRM({ user, permissions }) {
                                 <button className="btn small" onClick={(e) => { e.stopPropagation(); openPhone(contact); }}>Appeler</button>
                                 <button className="btn small" onClick={(e) => { e.stopPropagation(); openEmail(contact); }}>Email</button>
                                 <button className="btn small primary" onClick={(e) => { e.stopPropagation(); validateOpportunity(contact); }}>Valider</button>
+                                <button className="btn small danger-outline" onClick={(e) => { e.stopPropagation(); exitOpportunity(contact); }}>Sortir</button>
                               </>
                             )}
                             <button className="btn small" onClick={(e) => { e.stopPropagation(); setSelectedContact(contact); }}>Ouvrir</button>

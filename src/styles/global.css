@@ -9592,3 +9592,66 @@ textarea:focus {
   width: 100%;
   justify-content: center;
 }
+
+/* CRM hot opportunities actions */
+.crm-focus-grid-single {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.crm-focus-row-with-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.crm-focus-main {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  text-align: left;
+  cursor: pointer;
+  padding: 0;
+}
+
+.crm-focus-main div {
+  display: grid;
+  gap: 3px;
+}
+
+.crm-focus-main small {
+  color: var(--muted, #64748b);
+}
+
+.crm-focus-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.btn.danger-outline {
+  color: #b42318;
+  border-color: #f0a6a0;
+  background: #fff;
+}
+
+.btn.danger-outline:hover {
+  background: #fff4f2;
+  border-color: #d92d20;
+}
+
+@media (max-width: 760px) {
+  .crm-focus-row-with-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .crm-focus-actions {
+    justify-content: flex-end;
+  }
+}

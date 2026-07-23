@@ -1017,10 +1017,27 @@ export default function CRM({ user, permissions }) {
   function manualProjectOptions(targetStatus) {
     return projects
       .filter((project) => {
-        const alreadyVisible = contacts.some((contact) => linkedProject(contact)?.id === project.id);
-        if (alreadyVisible) return false;
-        if (targetStatus === "validated") return project.status !== "in_production";
-        return true;
+        const linkedContact = contacts.find((contact) =>
+          contact.project_id === project.id || contact.id === project.crm_contact_id
+        );
+        const currentLifecycle = linkedContact ? opportunityLifecycle(linkedContact) : null;
+
+        if (targetStatus === "validated") {
+          // Le menu Validé reprend exactement les projets validés/planifiés
+          // de l'onglet Projets, même s'ils possèdent déjà une fiche CRM.
+          if (!["validated", "planned"].includes(project.status)) return false;
+          return currentLifecycle !== "validated";
+        }
+
+        if (targetStatus === "in_production") {
+          // Un projet validé ou planifié peut être ajouté/lancé manuellement
+          // en production. Les projets déjà en production restent également
+          // proposés s'ils ne sont pas encore retranscrits dans cette colonne.
+          if (!["validated", "planned", "in_production"].includes(project.status)) return false;
+          return currentLifecycle !== "in_production";
+        }
+
+        return false;
       })
       .sort((a, b) => projectDisplayName(a).localeCompare(projectDisplayName(b), "fr"));
   }

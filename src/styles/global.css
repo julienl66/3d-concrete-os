@@ -9565,3 +9565,27 @@ textarea:focus {
 @media (max-width: 760px) {
   .crm-pipeline-setup-banner, .crm-settings-pipeline-head { align-items: stretch; flex-direction: column; }
 }
+
+
+.crm-manual-project-link {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border, #e2e8f0);
+  background: rgba(255, 255, 255, 0.58);
+}
+
+.crm-manual-project-link select {
+  width: 100%;
+  min-width: 0;
+}
+
+.crm-manual-project-link > div {
+  display: flex;
+  gap: 8px;
+}
+
+.crm-add-existing-project {
+  width: 100%;
+  justify-content: center;
+}

@@ -45,6 +45,8 @@ export default function CRM({ user, permissions }) {
     min_probability: "",
   });
   const [activeCall, setActiveCall] = useState(null);
+  const [manualProjectColumn, setManualProjectColumn] = useState(null);
+  const [manualProjectId, setManualProjectId] = useState("");
 
   const [contactForm, setContactForm] = useState({
     company_name: "",
@@ -861,6 +863,129 @@ export default function CRM({ user, permissions }) {
 
     if (!project) return;
     setMessage("Opportunité validée et projet créé avec la date de signature.");
+    await loadData();
+  }
+
+
+  function projectDisplayName(project) {
+    if (!project) return "Projet";
+    return `${project.project_code ? `${project.project_code} - ` : ""}${project.name || project.client_name || "Projet sans nom"}`;
+  }
+
+  function manualProjectOptions(targetStatus) {
+    return projects
+      .filter((project) => {
+        const alreadyVisible = contacts.some((contact) => linkedProject(contact)?.id === project.id);
+        if (alreadyVisible) return false;
+        if (targetStatus === "validated") return project.status !== "in_production";
+        return true;
+      })
+      .sort((a, b) => projectDisplayName(a).localeCompare(projectDisplayName(b), "fr"));
+  }
+
+  async function addExistingProjectToLifecycle(targetStatus) {
+    if (!manualProjectId) {
+      setMessage("Sélectionne un projet à ajouter.");
+      return;
+    }
+
+    if (!can("can_edit") || !can("can_create")) {
+      setMessage("Action non autorisée.");
+      return;
+    }
+
+    const project = projects.find((item) => item.id === manualProjectId);
+    if (!project) {
+      setMessage("Projet introuvable.");
+      return;
+    }
+
+    const validatedStage = stages.find((stage) => {
+      const name = String(stage.name || "").toLowerCase();
+      return name.includes("devis valid") || name.includes("sign") || name.includes("gagn");
+    });
+
+    if (!validatedStage) {
+      setMessage("L'étape « Devis validé » est introuvable. Réinstalle le pipeline en 12 étapes.");
+      return;
+    }
+
+    let contact = contacts.find((item) => item.id === project.crm_contact_id)
+      || contacts.find((item) => item.project_id === project.id)
+      || null;
+
+    if (!contact) {
+      const { data, error } = await supabase
+        .from("crm_contacts")
+        .insert({
+          company_name: project.client_name || project.name || "Client à compléter",
+          contact_name: null,
+          contact_type: "client",
+          stage_id: validatedStage.id,
+          probability_percent: 100,
+          estimated_amount: Number(project.sale_amount || 0),
+          expected_signature_month: project.signed_date ? String(project.signed_date).slice(0, 7) : null,
+          project_id: project.id,
+          dossier_code: project.dossier_code || null,
+          notes: `Fiche CRM créée automatiquement depuis le projet ${project.name || "sans nom"}.`,
+        })
+        .select()
+        .single();
+
+      if (error) {
+        setMessage(error.message);
+        return;
+      }
+      contact = data;
+    } else {
+      const { error } = await supabase
+        .from("crm_contacts")
+        .update({
+          project_id: project.id,
+          stage_id: validatedStage.id,
+          probability_percent: 100,
+          dossier_code: contact.dossier_code || project.dossier_code || null,
+        })
+        .eq("id", contact.id);
+
+      if (error) {
+        setMessage(error.message);
+        return;
+      }
+    }
+
+    const updatePayload = {
+      crm_contact_id: contact.id,
+      status: targetStatus === "in_production" ? "in_production" : "validated",
+    };
+
+    if (targetStatus === "in_production" && !project.production_start_date) {
+      updatePayload.production_start_date = todayValue();
+    }
+
+    const { error: projectError } = await supabase
+      .from("projects")
+      .update(updatePayload)
+      .eq("id", project.id);
+
+    if (projectError) {
+      setMessage(projectError.message);
+      return;
+    }
+
+    await emitEvent({
+      event_type: "PROJECT_MANUALLY_LINKED_TO_CRM",
+      entity_type: "project",
+      entity_id: project.id,
+      title: `Projet ajouté manuellement au CRM : ${project.name}`,
+      description: targetStatus === "in_production" ? "Ajouté dans En production" : "Ajouté dans Validé",
+      payload: { project_id: project.id, crm_contact_id: contact.id, target_status: targetStatus },
+      user,
+    });
+
+    setManualProjectColumn(null);
+    setManualProjectId("");
+    setMessage(`Le projet « ${project.name} » a été ajouté dans ${targetStatus === "in_production" ? "En production" : "Validé"}.`);
     await loadData();
   }
 
@@ -2197,6 +2322,27 @@ export default function CRM({ user, permissions }) {
                     <span>{formatMoney(temperatureAmount(key))}</span>
                   </div>
                 </header>
+
+                {["validated", "in_production"].includes(key) && (
+                  <div className="crm-manual-project-link">
+                    {manualProjectColumn === key ? (
+                      <>
+                        <select value={manualProjectId} onChange={(e) => setManualProjectId(e.target.value)}>
+                          <option value="">Sélectionner un projet existant</option>
+                          {manualProjectOptions(key).map((project) => (
+                            <option key={project.id} value={project.id}>{projectDisplayName(project)}</option>
+                          ))}
+                        </select>
+                        <div>
+                          <button className="btn small primary" onClick={() => addExistingProjectToLifecycle(key)}>Ajouter</button>
+                          <button className="btn small" onClick={() => { setManualProjectColumn(null); setManualProjectId(""); }}>Annuler</button>
+                        </div>
+                      </>
+                    ) : (
+                      <button className="btn small crm-add-existing-project" onClick={() => { setManualProjectColumn(key); setManualProjectId(""); }}>+ Ajouter un projet existant</button>
+                    )}
+                  </div>
+                )}
 
                 <div className="crm-temperature-list">
                   {items.length === 0 ? (

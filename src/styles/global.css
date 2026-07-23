@@ -9665,3 +9665,76 @@ textarea:focus {
   background: rgba(220, 38, 38, 0.1);
   color: #b91c1c;
 }
+
+/* CRM — vivier de prospects */
+.crm-pool-card {
+  display: grid;
+  gap: 18px;
+}
+
+.crm-pool-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.crm-pool-toolbar input {
+  flex: 1;
+}
+
+.crm-pool-list {
+  display: grid;
+  gap: 10px;
+}
+
+.crm-pool-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 14px;
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: 14px;
+  background: var(--surface, #fff);
+}
+
+.crm-pool-main {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.crm-pool-main div {
+  display: grid;
+  gap: 4px;
+}
+
+.crm-pool-main small,
+.crm-pool-main > span {
+  color: var(--muted, #64748b);
+}
+
+.crm-pool-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+@media (max-width: 760px) {
+  .crm-pool-toolbar,
+  .crm-pool-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .crm-pool-actions {
+    width: 100%;
+  }
+}

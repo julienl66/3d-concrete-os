@@ -247,7 +247,7 @@ export default function CRM({ user, permissions }) {
   }
 
   function isOpenOpportunity(contact) {
-    return !isWonStage(contact.stage_id) && !isLostStage(contact.stage_id);
+    return contact.status === "active" && !isWonStage(contact.stage_id) && !isLostStage(contact.stage_id);
   }
 
   function contactProjects(contactId) {
@@ -374,6 +374,24 @@ export default function CRM({ user, permissions }) {
     });
   }, [contacts, search, crmFilters, stages, interactions, temperatureFilter]);
 
+  const prospectPool = useMemo(() => {
+    const query = search.toLowerCase().trim();
+    return contacts
+      .filter((contact) => contact.status === "contact_only")
+      .filter((contact) => {
+        if (!query) return true;
+        return [contact.company_name, contact.contact_name, contact.city, contact.email, contact.phone, contact.sector]
+          .filter(Boolean)
+          .some((value) => String(value).toLowerCase().includes(query));
+      })
+      .sort((a, b) => String(a.company_name || "").localeCompare(String(b.company_name || ""), "fr"));
+  }, [contacts, search]);
+
+  const legacySuspects = contacts.filter((contact) => {
+    const firstStage = [...stages].sort((a, b) => Number(a.stage_order || 0) - Number(b.stage_order || 0))[0];
+    return contact.status === "active" && contact.stage_id === firstStage?.id && !linkedProject(contact);
+  });
+
   const alerts = useMemo(() => {
     return interactions
       .filter((interaction) => {
@@ -421,7 +439,7 @@ export default function CRM({ user, permissions }) {
     .sort((a, b) => weightedPipe(b) - weightedPipe(a))
     .slice(0, 6);
 
-  const lifecycleContacts = filteredContacts.filter((contact) => !isLostStage(contact.stage_id));
+  const lifecycleContacts = filteredContacts.filter((contact) => contact.status === "active" && !isLostStage(contact.stage_id));
 
   const temperatureGroups = {
     hot: lifecycleContacts
@@ -899,22 +917,41 @@ export default function CRM({ user, permissions }) {
   }
 
   async function deleteOpportunityDirectly(contact) {
-    if (!can("can_delete")) {
+    if (!can("can_edit")) {
       setMessage("Action non autorisée.");
       return;
     }
 
-    const ok = window.confirm(`Supprimer définitivement « ${contact.company_name} » du CRM ?`);
+    const ok = window.confirm(
+      `Retirer uniquement l’opportunité « ${contact.company_name} » du pipeline ? Le contact et son historique resteront dans le CRM.`
+    );
     if (!ok) return;
 
-    const { error } = await supabase.from("crm_contacts").delete().eq("id", contact.id);
+    const { error } = await supabase
+      .from("crm_contacts")
+      .update({ status: "contact_only" })
+      .eq("id", contact.id);
+
     if (error) {
       setMessage(error.message);
       return;
     }
 
-    if (selectedContact?.id === contact.id) setSelectedContact(null);
-    setMessage("Opportunité supprimée définitivement.");
+    const { error: interactionError } = await supabase.from("crm_interactions").insert({
+      contact_id: contact.id,
+      interaction_type: "note",
+      subject: "Opportunité retirée du pipeline",
+      notes: "Le contact est conservé dans le CRM avec son historique.",
+      priority: "normal",
+      created_by: user?.id || null,
+    });
+
+    if (interactionError) {
+      setMessage(`Opportunité retirée, mais historique non créé : ${interactionError.message}`);
+    } else {
+      setMessage("Opportunité retirée du pipeline. Le contact reste dans le CRM.");
+    }
+
     await loadData();
   }
 
@@ -1290,8 +1327,6 @@ export default function CRM({ user, permissions }) {
       return;
     }
 
-    const firstStage = stages[0];
-
     const { data: createdContact, error } = await supabase.from("crm_contacts").insert({
       company_name: contactForm.company_name,
       contact_name: contactForm.contact_name || null,
@@ -1312,8 +1347,8 @@ export default function CRM({ user, permissions }) {
       project_id: contactForm.project_id || null,
       quote_id: contactForm.quote_id || null,
       notes: contactForm.notes || null,
-      stage_id: firstStage?.id || null,
-      status: "active",
+      stage_id: null,
+      status: "contact_only",
       created_by: user?.id || null,
     })
       .select()
@@ -1325,10 +1360,10 @@ export default function CRM({ user, permissions }) {
     }
 
     await emitEvent({
-      event_type: "CRM_OPPORTUNITY_CREATED",
+      event_type: "CRM_CONTACT_CREATED",
       entity_type: "crm",
       entity_id: createdContact?.id || null,
-      title: `Nouvelle opportunité CRM : ${contactForm.company_name}`,
+      title: `Nouveau prospect ajouté au vivier : ${contactForm.company_name}`,
       description: contactForm.city || null,
       payload: {
         company_name: contactForm.company_name,
@@ -1362,7 +1397,77 @@ export default function CRM({ user, permissions }) {
       notes: "",
     });
 
-    setMessage("Contact CRM ajouté.");
+    setMessage("Prospect ajouté au vivier CRM.");
+    await loadData();
+  }
+
+  async function createOpportunityFromProspect(contact) {
+    if (!can("can_edit")) {
+      setMessage("Action non autorisée.");
+      return;
+    }
+
+    const firstStage = [...stages].sort((a, b) => Number(a.stage_order || 0) - Number(b.stage_order || 0))[0];
+    if (!firstStage) {
+      setMessage("Aucune étape commerciale n'est configurée.");
+      return;
+    }
+
+    const { error } = await supabase
+      .from("crm_contacts")
+      .update({
+        status: "active",
+        stage_id: firstStage.id,
+        probability_percent: Number(firstStage.default_probability_percent ?? 5),
+      })
+      .eq("id", contact.id);
+
+    if (error) {
+      setMessage(error.message);
+      return;
+    }
+
+    await supabase.from("crm_interactions").insert({
+      contact_id: contact.id,
+      interaction_type: "note",
+      subject: "Prospect ciblé — opportunité créée",
+      notes: "Le prospect a été sélectionné depuis le vivier et intégré au pipeline commercial.",
+      priority: "normal",
+      created_by: user?.id || null,
+    });
+
+    setMessage("Opportunité créée. Le prospect apparaît maintenant dans le pipeline.");
+    await loadData();
+  }
+
+  async function initializeProspectPool() {
+    if (!can("can_edit")) {
+      setMessage("Action non autorisée.");
+      return;
+    }
+
+    if (legacySuspects.length === 0) {
+      setMessage("Aucun ancien suspect ciblé à replacer dans le vivier.");
+      return;
+    }
+
+    const ok = window.confirm(
+      `Replacer ${legacySuspects.length} contact(s) actuellement classé(s) « Suspect ciblé » dans le vivier ? Les fiches et leurs historiques seront conservés.`
+    );
+    if (!ok) return;
+
+    const ids = legacySuspects.map((contact) => contact.id);
+    const { error } = await supabase
+      .from("crm_contacts")
+      .update({ status: "contact_only", stage_id: null })
+      .in("id", ids);
+
+    if (error) {
+      setMessage(error.message);
+      return;
+    }
+
+    setMessage(`${ids.length} prospect(s) replacé(s) dans le vivier.`);
     await loadData();
   }
 
@@ -2052,6 +2157,9 @@ export default function CRM({ user, permissions }) {
             Modèle CSV
           </button>
 
+          <button className={viewMode === "pool" ? "btn primary" : "btn small"} onClick={() => setViewMode("pool")}>
+            Vivier prospects
+          </button>
           <button className={viewMode === "temperature" ? "btn primary" : "btn small"} onClick={() => setViewMode("temperature")}>
             Chaud / Tiède / Froid
           </button>
@@ -2069,6 +2177,7 @@ export default function CRM({ user, permissions }) {
 
       {message && <div className="alert info">{message}</div>}
 
+      {viewMode !== "pool" && (<>
       <div className="crm-alerts-grid crm-alerts-grid-extended">
         <div className="card crm-alert-card overdue">
           <h3>Alertes en retard</h3>
@@ -2309,7 +2418,7 @@ export default function CRM({ user, permissions }) {
                 <div className="crm-focus-actions">
                   <button className="btn small primary" onClick={() => validateOpportunity(contact)}>Valider</button>
                   <button className="btn small danger-outline" onClick={() => exitOpportunity(contact)}>Classer perdu</button>
-                  <button className="btn small danger-soft" onClick={() => deleteOpportunityDirectly(contact)}>Supprimer</button>
+                  <button className="btn small danger-soft" onClick={() => deleteOpportunityDirectly(contact)}>Retirer du pipeline</button>
                 </div>
               </div>
             ))
@@ -2317,8 +2426,58 @@ export default function CRM({ user, permissions }) {
         </div>
       </div>
 
+      </>)}
+
+      {viewMode === "pool" && (
+        <div className="card crm-pool-card">
+          <div className="page-head">
+            <div>
+              <p className="eyebrow">Base de prospection</p>
+              <h3>Vivier de prospects</h3>
+              <p>Les contacts restent ici tant qu'aucune opportunité commerciale n'a été créée.</p>
+            </div>
+            {legacySuspects.length > 0 && (
+              <button className="btn warning" onClick={initializeProspectPool}>
+                Initialiser le vivier ({legacySuspects.length})
+              </button>
+            )}
+          </div>
+
+          <div className="crm-pool-toolbar">
+            <input
+              placeholder="Rechercher dans le vivier : société, ville, contact..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+            <strong>{prospectPool.length} prospect(s)</strong>
+          </div>
+
+          <div className="crm-pool-list">
+            {prospectPool.length === 0 ? (
+              <div className="crm-temperature-empty">Aucun prospect dans le vivier.</div>
+            ) : prospectPool.map((contact) => (
+              <article className="crm-pool-row" key={contact.id}>
+                <button className="crm-pool-main" onClick={() => setSelectedContact(contact)}>
+                  <div>
+                    <strong>{contact.company_name}</strong>
+                    <small>{contact.contact_name || "Contact non renseigné"}{contact.city ? ` · ${contact.city}` : ""}</small>
+                  </div>
+                  <span>{contact.contact_type || "prospect"}</span>
+                </button>
+                <div className="crm-pool-actions">
+                  <button className="btn small" onClick={() => setSelectedContact(contact)}>Ouvrir</button>
+                  <button className="btn small primary" onClick={() => createOpportunityFromProspect(contact)}>
+                    Cibler / créer une opportunité
+                  </button>
+                </div>
+              </article>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div className="card">
-        <h3>Ajouter un contact / client</h3>
+        <h3>Ajouter un prospect au vivier</h3>
 
         <form className="crm-contact-form" onSubmit={createContact}>
           <div>
@@ -2534,14 +2693,14 @@ export default function CRM({ user, permissions }) {
                             ) : key === "production_completed" ? (
                               <span className="crm-production-state completed">Projet prêt</span>
                             ) : key === "lost" ? (
-                              <button className="btn small danger-soft" onClick={(e) => { e.stopPropagation(); deleteOpportunityDirectly(contact); }}>Supprimer définitivement</button>
+                              <button className="btn small danger-soft" onClick={(e) => { e.stopPropagation(); deleteOpportunityDirectly(contact); }}>Retirer du pipeline</button>
                             ) : (
                               <>
                                 <button className="btn small" onClick={(e) => { e.stopPropagation(); openPhone(contact); }}>Appeler</button>
                                 <button className="btn small" onClick={(e) => { e.stopPropagation(); openEmail(contact); }}>Email</button>
                                 <button className="btn small primary" onClick={(e) => { e.stopPropagation(); validateOpportunity(contact); }}>Valider</button>
                                 <button className="btn small danger-outline" onClick={(e) => { e.stopPropagation(); exitOpportunity(contact); }}>Classer perdu</button>
-                                <button className="btn small danger-soft" onClick={(e) => { e.stopPropagation(); deleteOpportunityDirectly(contact); }}>Supprimer</button>
+                                <button className="btn small danger-soft" onClick={(e) => { e.stopPropagation(); deleteOpportunityDirectly(contact); }}>Retirer du pipeline</button>
                               </>
                             )}
                             <button className="btn small" onClick={(e) => { e.stopPropagation(); setSelectedContact(contact); }}>Ouvrir</button>

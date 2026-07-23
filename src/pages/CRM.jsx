@@ -261,6 +261,7 @@ export default function CRM({ user, permissions }) {
 
   function opportunityLifecycle(contact) {
     const project = linkedProject(contact);
+    if (project?.status === "ready") return "production_completed";
     if (project?.status === "in_production") return "in_production";
     if (project && ["validated", "planned"].includes(project.status)) return "validated";
     if (isWonStage(contact.stage_id)) return "validated";
@@ -441,6 +442,9 @@ export default function CRM({ user, permissions }) {
     in_production: lifecycleContacts
       .filter((contact) => opportunityLifecycle(contact) === "in_production")
       .sort((a, b) => String(linkedProject(b)?.production_start_date || b.updated_at || "").localeCompare(String(linkedProject(a)?.production_start_date || a.updated_at || ""))),
+    production_completed: lifecycleContacts
+      .filter((contact) => opportunityLifecycle(contact) === "production_completed")
+      .sort((a, b) => String(linkedProject(b)?.production_end_date || b.updated_at || "").localeCompare(String(linkedProject(a)?.production_end_date || a.updated_at || ""))),
   };
 
   function temperatureAmount(key) {
@@ -1035,6 +1039,55 @@ export default function CRM({ user, permissions }) {
     });
 
     setMessage("Le projet est passé en production.");
+    await loadData();
+  }
+
+  async function completeOpportunityProduction(contact) {
+    if (!can("can_edit")) {
+      setMessage("Action non autorisée.");
+      return;
+    }
+
+    const project = linkedProject(contact);
+    if (!project) {
+      setMessage("Aucun projet ERP n'est lié à cette opportunité.");
+      return;
+    }
+
+    const ok = window.confirm(`Terminer la production du projet "${project.name}" ?`);
+    if (!ok) return;
+
+    const productionEndDate = window.prompt(
+      "Date de fin de production (AAAA-MM-JJ) ?",
+      todayValue()
+    );
+    if (productionEndDate === null) return;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(productionEndDate)) {
+      setMessage("La date de fin de production doit être au format AAAA-MM-JJ.");
+      return;
+    }
+
+    const { error } = await supabase
+      .from("projects")
+      .update({ status: "ready", production_end_date: productionEndDate })
+      .eq("id", project.id);
+
+    if (error) {
+      setMessage(error.message);
+      return;
+    }
+
+    await emitEvent({
+      event_type: "PROJECT_PRODUCTION_COMPLETED",
+      entity_type: "project",
+      entity_id: project.id,
+      title: `Production terminée : ${project.name}`,
+      description: contact.company_name,
+      payload: { production_end_date: productionEndDate, crm_contact_id: contact.id },
+      user,
+    });
+
+    setMessage("La production est terminée. Le projet est maintenant prêt.");
     await loadData();
   }
 
@@ -2299,12 +2352,14 @@ export default function CRM({ user, permissions }) {
 
       {viewMode === "temperature" && (
         <div className="crm-temperature-board">
-          {["hot", "warm", "cold", "validated", "in_production"].map((key) => {
+          {["hot", "warm", "cold", "validated", "in_production", "production_completed"].map((key) => {
             const meta = key === "validated"
               ? { label: "Validé", icon: "✅", hint: "Devis signé, en attente de production" }
               : key === "in_production"
                 ? { label: "En production", icon: "🏭", hint: "Fabrication actuellement lancée" }
-                : temperatureMeta(key);
+                : key === "production_completed"
+                  ? { label: "Production terminée", icon: "✅", hint: "Fabrication achevée, projet prêt" }
+                  : temperatureMeta(key);
             const items = temperatureGroups[key];
 
             return (
@@ -2313,7 +2368,7 @@ export default function CRM({ user, permissions }) {
                   <div>
                     <span className="crm-temperature-icon">{meta.icon}</span>
                     <div>
-                      <h3>{["validated", "in_production"].includes(key) ? meta.label : `Pipe ${meta.label}`}</h3>
+                      <h3>{["validated", "in_production", "production_completed"].includes(key) ? meta.label : `Pipe ${meta.label}`}</h3>
                       <p>{meta.hint}</p>
                     </div>
                   </div>
@@ -2359,7 +2414,7 @@ export default function CRM({ user, permissions }) {
                               <small>{stageName(contact.stage_id)} · {employeeName(contact.assigned_to)}</small>
                             </div>
                             <span className={`crm-score-badge ${key}`}>
-                              {key === "validated" ? "✓" : key === "in_production" ? "🏭" : opportunityScore(contact)}
+                              {key === "validated" ? "✓" : key === "in_production" ? "🏭" : key === "production_completed" ? "✅" : opportunityScore(contact)}
                             </span>
                           </div>
 
@@ -2389,7 +2444,9 @@ export default function CRM({ user, permissions }) {
                             {key === "validated" ? (
                               <button className="btn small primary" onClick={(e) => { e.stopPropagation(); launchOpportunityProduction(contact); }}>Lancer la production</button>
                             ) : key === "in_production" ? (
-                              <span className="crm-production-state">Production en cours</span>
+                              <button className="btn small primary" onClick={(e) => { e.stopPropagation(); completeOpportunityProduction(contact); }}>Terminer la production</button>
+                            ) : key === "production_completed" ? (
+                              <span className="crm-production-state completed">Projet prêt</span>
                             ) : (
                               <>
                                 <button className="btn small" onClick={(e) => { e.stopPropagation(); openPhone(contact); }}>Appeler</button>

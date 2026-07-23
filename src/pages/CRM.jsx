@@ -1071,6 +1071,7 @@ export default function CRM({ user, permissions }) {
           company_name: project.client_name || project.name || "Client à compléter",
           contact_name: null,
           contact_type: "client",
+          status: "active",
           stage_id: validatedStage.id,
           probability_percent: 100,
           estimated_amount: Number(project.sale_amount || 0),
@@ -1092,6 +1093,7 @@ export default function CRM({ user, permissions }) {
         .from("crm_contacts")
         .update({
           project_id: project.id,
+          status: "active",
           stage_id: validatedStage.id,
           probability_percent: 100,
           dossier_code: contact.dossier_code || project.dossier_code || null,

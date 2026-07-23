@@ -1,4 +1,3 @@
-// CRM v2.2 — séparation stricte vivier / opportunités
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../services/supabase.js";
 import { canAccess } from "../services/permissions.js";
@@ -328,7 +327,44 @@ export default function CRM({ user, permissions }) {
   }
 
   function hasExplicitPipelineEntry(contact) {
-    return Boolean(contact?.is_opportunity);
+    if (!contact) return false;
+
+    // Les dossiers déjà transformés en projet ou classés gagnés/perdus restent toujours visibles.
+    if (linkedProject(contact) || isWonStage(contact.stage_id) || isLostStage(contact.stage_id)) return true;
+
+    // Un contact du vivier n'entre jamais automatiquement dans le pipeline.
+    if (contact.status !== "active" || !contact.stage_id) return false;
+
+    const firstStage = firstCommercialStage();
+    const currentStage = stages.find((stage) => stage.id === contact.stage_id);
+    const currentProbability = Number(contact.probability_percent ?? contact.probability ?? 0);
+
+    // Une étape réellement avancée prouve que le dossier a été travaillé commercialement.
+    if (currentStage && firstStage && Number(currentStage.stage_order || 0) > Number(firstStage.stage_order || 0)) return true;
+
+    // On conserve les opportunités chaudes et tièdes historiques. Les anciennes valeurs par défaut
+    // de 5 %, 20 % ou 30 % ne suffisent plus à transformer tout le vivier en pipe froid.
+    if (currentProbability >= 40) return true;
+
+    return contactInteractions(contact.id).some((item) => {
+      const type = String(item.interaction_type || "").trim().toLowerCase();
+      const subject = String(item.subject || "").trim().toLowerCase();
+
+      // Ces libellés sont créés uniquement lors d'un ajout volontaire depuis le vivier.
+      const explicitManualEntry =
+        subject.includes("prospect ciblé — opportunité créée")
+        || subject.includes("opportunité créée depuis le vivier")
+        || subject.includes("ajouté manuellement depuis le vivier")
+        || subject.includes("qualifiée par probabilité");
+
+      if (explicitManualEntry) return true;
+
+      // Les relances générées par l'import CSV ne doivent pas créer 900 opportunités.
+      if (subject === "import csv" || subject.startsWith("import csv")) return false;
+
+      // Une vraie action commerciale enregistrée manuellement crée bien une opportunité.
+      return ["appel", "email", "rdv", "devis"].includes(type);
+    });
   }
 
   function isPipelineContact(contact) {
@@ -709,7 +745,6 @@ export default function CRM({ user, permissions }) {
           stage_id: null,
           assigned_to: employee?.id || null,
           status: "contact_only",
-          is_opportunity: false,
           created_by: user?.id || null,
         };
       })
@@ -916,7 +951,6 @@ export default function CRM({ user, permissions }) {
         .from("crm_contacts")
         .update({
           stage_id: lostStage.id,
-          is_opportunity: true,
           probability_percent: 0,
           notes: previousNotes ? `${previousNotes}\n${lossLine}` : lossLine,
         })
@@ -959,7 +993,7 @@ export default function CRM({ user, permissions }) {
 
     const { error } = await supabase
       .from("crm_contacts")
-      .update({ status: "contact_only", is_opportunity: false, stage_id: null })
+      .update({ status: "contact_only" })
       .eq("id", contact.id);
 
     if (error) {
@@ -1013,7 +1047,7 @@ export default function CRM({ user, permissions }) {
 
     const { error: stageError } = await supabase
       .from("crm_contacts")
-      .update({ stage_id: validatedStage.id, probability_percent: 100, status: "active", is_opportunity: true })
+      .update({ stage_id: validatedStage.id, probability_percent: 100 })
       .eq("id", contact.id);
 
     if (stageError) {
@@ -1095,7 +1129,6 @@ export default function CRM({ user, permissions }) {
           contact_name: null,
           contact_type: "client",
           status: "active",
-          is_opportunity: true,
           stage_id: validatedStage.id,
           probability_percent: 100,
           estimated_amount: Number(project.sale_amount || 0),
@@ -1118,7 +1151,6 @@ export default function CRM({ user, permissions }) {
         .update({
           project_id: project.id,
           status: "active",
-          is_opportunity: true,
           stage_id: validatedStage.id,
           probability_percent: 100,
           dossier_code: contact.dossier_code || project.dossier_code || null,
@@ -1287,7 +1319,6 @@ export default function CRM({ user, permissions }) {
       contact_type: opportunityForm.contact_type || "prospect",
       assigned_to: opportunityForm.assigned_to || null,
       stage_id: opportunityForm.stage_id || (activatesFromPool ? firstStage?.id : null),
-      is_opportunity: activatesFromPool || Boolean(selectedContact?.is_opportunity),
       status: activatesFromPool ? "active" : selectedContact.status,
       estimated_amount: Number(opportunityForm.estimated_amount || 0),
       margin_percent: opportunityForm.margin_percent ? Number(opportunityForm.margin_percent) : null,
@@ -1408,7 +1439,6 @@ export default function CRM({ user, permissions }) {
       notes: contactForm.notes || null,
       stage_id: null,
       status: "contact_only",
-      is_opportunity: false,
       created_by: user?.id || null,
     })
       .select()
@@ -1477,7 +1507,6 @@ export default function CRM({ user, permissions }) {
       .from("crm_contacts")
       .update({
         status: "active",
-        is_opportunity: true,
         stage_id: firstStage.id,
         probability_percent: Number(firstStage.default_probability_percent ?? 5),
       })
@@ -1547,7 +1576,6 @@ export default function CRM({ user, permissions }) {
       .from("crm_contacts")
       .update({
         status: "active",
-        is_opportunity: true,
         stage_id: stage.id,
         probability_percent: probability,
       })
@@ -1625,7 +1653,7 @@ export default function CRM({ user, permissions }) {
     const ids = contactsToMoveToPool.map((contact) => contact.id);
     const { error } = await supabase
       .from("crm_contacts")
-      .update({ status: "contact_only", is_opportunity: false, stage_id: null })
+      .update({ status: "contact_only", stage_id: null })
       .in("id", ids);
 
     if (error) {
@@ -1678,7 +1706,7 @@ export default function CRM({ user, permissions }) {
       contact.estimated_amount = Number(amount || 0);
     }
 
-    const patch = { stage_id: stageId, status: "active", is_opportunity: true };
+    const patch = { stage_id: stageId };
     if (definition?.probability !== undefined) patch.probability_percent = definition.probability;
     else if (targetStage?.default_probability_percent != null) patch.probability_percent = Number(targetStage.default_probability_percent);
     if (targetName === "Devis envoyé" && contact) patch.estimated_amount = Number(contact.estimated_amount || 0);
@@ -1862,7 +1890,6 @@ export default function CRM({ user, permissions }) {
           .from("crm_contacts")
           .update({
             status: "active",
-            is_opportunity: true,
             stage_id: firstStage.id,
             probability_percent: Number(selectedContact.probability_percent || defaultProbability),
           })

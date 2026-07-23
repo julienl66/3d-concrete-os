@@ -387,9 +387,15 @@ export default function CRM({ user, permissions }) {
       .sort((a, b) => String(a.company_name || "").localeCompare(String(b.company_name || ""), "fr"));
   }, [contacts, search]);
 
-  const legacySuspects = contacts.filter((contact) => {
-    const firstStage = [...stages].sort((a, b) => Number(a.stage_order || 0) - Number(b.stage_order || 0))[0];
-    return contact.status === "active" && contact.stage_id === firstStage?.id && !linkedProject(contact);
+  // Contacts historiques placés automatiquement dans le pipeline avant la création du vivier.
+  // On conserve les contacts liés à un projet ainsi que les dossiers gagnés/perdus.
+  const contactsToMoveToPool = contacts.filter((contact) => {
+    return (
+      contact.status === "active" &&
+      !linkedProject(contact) &&
+      !isWonStage(contact.stage_id) &&
+      !isLostStage(contact.stage_id)
+    );
   });
 
   const alerts = useMemo(() => {
@@ -677,9 +683,11 @@ export default function CRM({ user, permissions }) {
           city: valueFromRow(row, ["city", "ville", "commune"]) || null,
           contact_type: valueFromRow(row, ["contact_type", "type"]) || "prospect",
           notes: valueFromRow(row, ["notes", "note", "commentaire", "commentaires"]) || null,
-          stage_id: stage?.id || firstStage?.id || null,
+          // Un import alimente la base de prospection. Une opportunité n'est créée
+          // qu'après ciblage volontaire depuis le vivier.
+          stage_id: null,
           assigned_to: employee?.id || null,
-          status: "active",
+          status: "contact_only",
           created_by: user?.id || null,
         };
       })
@@ -743,7 +751,7 @@ export default function CRM({ user, permissions }) {
       }
     }
 
-    setMessage(`${contactsToInsert.length} contact(s) importé(s).`);
+    setMessage(`${contactsToInsert.length} prospect(s) importé(s) dans le vivier.`);
     await loadData();
   }
 
@@ -1445,17 +1453,17 @@ export default function CRM({ user, permissions }) {
       return;
     }
 
-    if (legacySuspects.length === 0) {
-      setMessage("Aucun ancien suspect ciblé à replacer dans le vivier.");
+    if (contactsToMoveToPool.length === 0) {
+      setMessage("Tous les contacts non liés à un projet sont déjà dans le vivier.");
       return;
     }
 
     const ok = window.confirm(
-      `Replacer ${legacySuspects.length} contact(s) actuellement classé(s) « Suspect ciblé » dans le vivier ? Les fiches et leurs historiques seront conservés.`
+      `Replacer ${contactsToMoveToPool.length} contact(s) actuellement présents dans le pipeline dans le vivier ? Les fiches, coordonnées et historiques seront intégralement conservés. Les projets validés, en production ou terminés ne seront pas modifiés.`
     );
     if (!ok) return;
 
-    const ids = legacySuspects.map((contact) => contact.id);
+    const ids = contactsToMoveToPool.map((contact) => contact.id);
     const { error } = await supabase
       .from("crm_contacts")
       .update({ status: "contact_only", stage_id: null })
@@ -1466,7 +1474,7 @@ export default function CRM({ user, permissions }) {
       return;
     }
 
-    setMessage(`${ids.length} prospect(s) replacé(s) dans le vivier.`);
+    setMessage(`${ids.length} contact(s) retiré(s) du pipeline et replacé(s) dans le vivier.`);
     await loadData();
   }
 
@@ -2433,11 +2441,11 @@ export default function CRM({ user, permissions }) {
             <div>
               <p className="eyebrow">Base de prospection</p>
               <h3>Vivier de prospects</h3>
-              <p>Les contacts restent ici tant qu'aucune opportunité commerciale n'a été créée.</p>
+              <p>Tous les prospects sont conservés ici. Seuls ceux ciblés volontairement sont ajoutés au pipeline commercial.</p>
             </div>
-            {legacySuspects.length > 0 && (
+            {contactsToMoveToPool.length > 0 && (
               <button className="btn warning" onClick={initializeProspectPool}>
-                Initialiser le vivier ({legacySuspects.length})
+                Replacer le pipeline actuel dans le vivier ({contactsToMoveToPool.length})
               </button>
             )}
           </div>

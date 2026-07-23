@@ -58,8 +58,8 @@ export default function CRM({ user, permissions }) {
     assigned_to: "",
     estimated_amount: "",
     margin_percent: "",
-    probability_percent: "30",
-    expected_signature_month: new Date().toISOString().slice(0, 7),
+    probability_percent: "",
+    expected_signature_month: "",
     product_family: "",
     sector: "",
     lead_source: "",
@@ -318,6 +318,35 @@ export default function CRM({ user, permissions }) {
       .sort((a, b) => String(a.next_action_date).localeCompare(String(b.next_action_date)))[0] || null;
   }
 
+  function firstCommercialStage() {
+    return [...stages]
+      .filter((stage) => !String(stage.name || "").toLowerCase().includes("perdu"))
+      .sort((a, b) => Number(a.stage_order || 0) - Number(b.stage_order || 0))[0] || null;
+  }
+
+  function hasExplicitPipelineEntry(contact) {
+    if (!contact) return false;
+    if (linkedProject(contact) || isWonStage(contact.stage_id) || isLostStage(contact.stage_id)) return true;
+    if (contact.status !== "active" || !contact.stage_id) return false;
+
+    const firstStage = firstCommercialStage();
+    const currentStage = stages.find((stage) => stage.id === contact.stage_id);
+    if (currentStage && firstStage && Number(currentStage.stage_order || 0) > Number(firstStage.stage_order || 0)) return true;
+
+    return contactInteractions(contact.id).some((item) => {
+      const type = String(item.interaction_type || "").toLowerCase();
+      const subject = String(item.subject || "").toLowerCase();
+      return ["appel", "email", "rdv", "devis", "relance"].includes(type)
+        || subject.includes("prospect ciblé")
+        || subject.includes("opportunité créée")
+        || subject.includes("qualifiée par probabilité");
+    });
+  }
+
+  function isPipelineContact(contact) {
+    return contact?.status === "active" && hasExplicitPipelineEntry(contact);
+  }
+
   const filteredContacts = useMemo(() => {
     const query = search.toLowerCase().trim();
 
@@ -377,7 +406,8 @@ export default function CRM({ user, permissions }) {
   const prospectPool = useMemo(() => {
     const query = search.toLowerCase().trim();
     return contacts
-      .filter((contact) => contact.status === "contact_only")
+      .filter((contact) => !linkedProject(contact) && !isWonStage(contact.stage_id) && !isLostStage(contact.stage_id))
+      .filter((contact) => !isPipelineContact(contact))
       .filter((contact) => {
         if (!query) return true;
         return [contact.company_name, contact.contact_name, contact.city, contact.email, contact.phone, contact.sector]
@@ -385,7 +415,7 @@ export default function CRM({ user, permissions }) {
           .some((value) => String(value).toLowerCase().includes(query));
       })
       .sort((a, b) => String(a.company_name || "").localeCompare(String(b.company_name || ""), "fr"));
-  }, [contacts, search]);
+  }, [contacts, search, stages, interactions, projects]);
 
   // Contacts historiques placés automatiquement dans le pipeline avant la création du vivier.
   // On conserve les contacts liés à un projet ainsi que les dossiers gagnés/perdus.
@@ -394,7 +424,8 @@ export default function CRM({ user, permissions }) {
       contact.status === "active" &&
       !linkedProject(contact) &&
       !isWonStage(contact.stage_id) &&
-      !isLostStage(contact.stage_id)
+      !isLostStage(contact.stage_id) &&
+      !hasExplicitPipelineEntry(contact)
     );
   });
 
@@ -427,8 +458,9 @@ export default function CRM({ user, permissions }) {
     return type === "devis" || subject.includes("devis") || action.includes("devis");
   });
 
-  const openOpportunities = contacts.filter(isOpenOpportunity);
-  const filteredOpenOpportunities = filteredContacts.filter(isOpenOpportunity);
+  const openOpportunities = contacts.filter((contact) => isPipelineContact(contact) && isOpenOpportunity(contact));
+  const pipelineContacts = filteredContacts.filter(isPipelineContact);
+  const filteredOpenOpportunities = pipelineContacts.filter(isOpenOpportunity);
 
   const crmPipelineRaw = filteredOpenOpportunities.reduce(
     (sum, contact) => sum + Number(contact.estimated_amount || 0),
@@ -440,7 +472,7 @@ export default function CRM({ user, permissions }) {
     0
   );
 
-  const lifecycleContacts = filteredContacts.filter((contact) => contact.status === "active" && !isLostStage(contact.stage_id));
+  const lifecycleContacts = pipelineContacts.filter((contact) => !isLostStage(contact.stage_id));
 
   const temperatureGroups = {
     hot: lifecycleContacts
@@ -462,7 +494,7 @@ export default function CRM({ user, permissions }) {
       .filter((contact) => opportunityLifecycle(contact) === "production_completed")
       .sort((a, b) => String(linkedProject(b)?.production_end_date || b.updated_at || "").localeCompare(String(linkedProject(a)?.production_end_date || a.updated_at || ""))),
     lost: filteredContacts
-      .filter((contact) => isLostStage(contact.stage_id))
+      .filter((contact) => contact.status === "active" && isLostStage(contact.stage_id))
       .sort((a, b) => String(b.updated_at || b.created_at || "").localeCompare(String(a.updated_at || a.created_at || ""))),
   };
 
@@ -1249,6 +1281,10 @@ export default function CRM({ user, permissions }) {
       return;
     }
 
+    const selectedProbability = opportunityForm.probability_percent ? Number(opportunityForm.probability_percent) : null;
+    const firstStage = firstCommercialStage();
+    const activatesFromPool = !isPipelineContact(selectedContact) && Number(selectedProbability || 0) > 0;
+
     const payload = {
       company_name: opportunityForm.company_name || "Sans nom",
       contact_name: opportunityForm.contact_name || null,
@@ -1257,10 +1293,11 @@ export default function CRM({ user, permissions }) {
       city: opportunityForm.city || null,
       contact_type: opportunityForm.contact_type || "prospect",
       assigned_to: opportunityForm.assigned_to || null,
-      stage_id: opportunityForm.stage_id || null,
+      stage_id: opportunityForm.stage_id || (activatesFromPool ? firstStage?.id : null),
+      status: activatesFromPool ? "active" : selectedContact.status,
       estimated_amount: Number(opportunityForm.estimated_amount || 0),
       margin_percent: opportunityForm.margin_percent ? Number(opportunityForm.margin_percent) : null,
-      probability_percent: opportunityForm.probability_percent ? Number(opportunityForm.probability_percent) : null,
+      probability_percent: selectedProbability,
       expected_signature_month: opportunityForm.expected_signature_month || null,
       product_family: opportunityForm.product_family || null,
       sector: opportunityForm.sector || null,
@@ -1283,6 +1320,17 @@ export default function CRM({ user, permissions }) {
     if (error) {
       setMessage(error.message);
       return;
+    }
+
+    if (activatesFromPool) {
+      await supabase.from("crm_interactions").insert({
+        contact_id: selectedContact.id,
+        interaction_type: "note",
+        subject: "Opportunité qualifiée par probabilité",
+        notes: `Le prospect a été ajouté au pipeline avec une probabilité de ${selectedProbability} %.`,
+        priority: "normal",
+        created_by: user?.id || null,
+      });
     }
 
     await emitEvent({
@@ -1402,8 +1450,8 @@ export default function CRM({ user, permissions }) {
       assigned_to: "",
       estimated_amount: "",
       margin_percent: "",
-      probability_percent: "30",
-      expected_signature_month: new Date().toISOString().slice(0, 7),
+      probability_percent: "",
+      expected_signature_month: "",
       product_family: "",
       sector: "",
       lead_source: "",
@@ -1702,6 +1750,24 @@ export default function CRM({ user, permissions }) {
       return;
     }
 
+    const interactionCreatesOpportunity = !isPipelineContact(selectedContact)
+      && ["appel", "email", "rdv", "devis", "relance"].includes(String(interactionForm.interaction_type || "").toLowerCase());
+
+    if (interactionCreatesOpportunity) {
+      const firstStage = firstCommercialStage();
+      if (firstStage) {
+        const defaultProbability = Number(firstStage.default_probability_percent ?? 5);
+        await supabase
+          .from("crm_contacts")
+          .update({
+            status: "active",
+            stage_id: firstStage.id,
+            probability_percent: Number(selectedContact.probability_percent || defaultProbability),
+          })
+          .eq("id", selectedContact.id);
+      }
+    }
+
     await emitEvent({
       event_type: "CRM_INTERACTION_CREATED",
       entity_type: "crm",
@@ -1729,7 +1795,9 @@ export default function CRM({ user, permissions }) {
       next_action_date: "",
     });
 
-    setMessage("Interaction ajoutée.");
+    setMessage(interactionCreatesOpportunity
+      ? "Interaction ajoutée. Le prospect entre maintenant dans le pipeline."
+      : "Interaction ajoutée.");
     await loadData();
   }
 
@@ -2745,13 +2813,13 @@ export default function CRM({ user, permissions }) {
             </div>
           )}
           <div className="crm-board-summary">
-            <span>{filteredContacts.length} opportunité(s) affichée(s)</span>
+            <span>{pipelineContacts.length} opportunité(s) affichée(s)</span>
             <strong>{formatMoney(crmPipelineWeighted)} pondéré</strong>
           </div>
 
           <div className="crm-board">
             {stages.map((stage) => {
-              const stageContacts = filteredContacts.filter((contact) => contact.stage_id === stage.id);
+              const stageContacts = pipelineContacts.filter((contact) => contact.stage_id === stage.id);
               const metrics = stageMetrics(stageContacts);
 
               return (
@@ -2788,7 +2856,7 @@ export default function CRM({ user, permissions }) {
               onDrop={() => draggedContactId && updateContactStage(draggedContactId, null)}
             >
               {(() => {
-                const noStageContacts = filteredContacts.filter((contact) => !contact.stage_id);
+                const noStageContacts = pipelineContacts.filter((contact) => !contact.stage_id);
                 const metrics = stageMetrics(noStageContacts);
 
                 return (

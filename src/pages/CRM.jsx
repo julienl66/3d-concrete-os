@@ -1,3 +1,4 @@
+// CRM BUILD REFRESH 2026-07-23
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../services/supabase.js";
 import { canAccess } from "../services/permissions.js";

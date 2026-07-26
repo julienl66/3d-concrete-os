@@ -198,13 +198,13 @@ export default function WeeklyPoints({ user, permissions }) {
       return;
     }
 
-    if (!taskForm.topic_id || !taskForm.title) {
-      setMessage("Sujet et tâche obligatoires.");
+    if (!taskForm.title) {
+      setMessage("Tâche obligatoire.");
       return;
     }
 
     const { error } = await supabase.from("weekly_tasks").insert({
-      topic_id: taskForm.topic_id,
+      topic_id: taskForm.topic_id || null,
       title: taskForm.title,
       description: taskForm.description || null,
       assigned_to: taskForm.assigned_to || null,
@@ -219,11 +219,13 @@ export default function WeeklyPoints({ user, permissions }) {
       return;
     }
 
-    await supabase
-      .from("weekly_topics")
-      .update({ status: "in_progress" })
-      .eq("id", taskForm.topic_id)
-      .neq("status", "done");
+    if (taskForm.topic_id) {
+      await supabase
+        .from("weekly_topics")
+        .update({ status: "in_progress" })
+        .eq("id", taskForm.topic_id)
+        .neq("status", "done");
+    }
 
     setTaskForm({
       topic_id: "",
@@ -263,7 +265,7 @@ export default function WeeklyPoints({ user, permissions }) {
       (item) => item.topic_id === task.topic_id && item.id !== task.id && item.status !== "done"
     );
 
-    if (remainingTasks.length === 0) {
+    if (task.topic_id && remainingTasks.length === 0) {
       await supabase
         .from("weekly_topics")
         .update({
@@ -298,10 +300,12 @@ export default function WeeklyPoints({ user, permissions }) {
       return;
     }
 
-    await supabase
-      .from("weekly_topics")
-      .update({ status: "in_progress", validated_by: null, validated_at: null })
-      .eq("id", task.topic_id);
+    if (task.topic_id) {
+      await supabase
+        .from("weekly_topics")
+        .update({ status: "in_progress", validated_by: null, validated_at: null })
+        .eq("id", task.topic_id);
+    }
 
     setMessage("Tâche rouverte.");
     await loadData();
@@ -382,7 +386,7 @@ export default function WeeklyPoints({ user, permissions }) {
               <div className={`weekly-global-task-card ${task.due_date && String(task.due_date) < new Date().toISOString().slice(0, 10) ? "late" : ""}`} key={task.id}>
                 <strong>❌ {task.title}</strong>
                 <small>{employeeName(task.assigned_to)}</small>
-                <small>{topics.find((topic) => topic.id === task.topic_id)?.title || "Point hebdo"}</small>
+                <small>{topics.find((topic) => topic.id === task.topic_id)?.title || "Tâche directe"}</small>
                 {task.due_date && <small>Échéance : {task.due_date}</small>}
                 <button className="btn small primary" onClick={() => completeTask(task)}>✅ Valider</button>
               </div>
@@ -448,7 +452,7 @@ export default function WeeklyPoints({ user, permissions }) {
                 value={taskForm.topic_id}
                 onChange={(e) => setTaskForm({ ...taskForm, topic_id: e.target.value })}
               >
-                <option value="">Choisir</option>
+                <option value="">Aucun sujet (tâche directe)</option>
                 {topics.filter((topic) => topic.status !== "done").map((topic) => (
                   <option key={topic.id} value={topic.id}>{topic.title}</option>
                 ))}

@@ -72,6 +72,12 @@ export default function ActivityCenter({ user, permissions }) {
     entity_type: "manual",
     importance: "action",
   });
+  const [taskForm, setTaskForm] = useState({
+    title: "",
+    description: "",
+    assigned_to: "",
+    due_date: "",
+  });
 
   useEffect(() => {
     loadActivityCenter();
@@ -227,6 +233,59 @@ export default function ActivityCenter({ user, permissions }) {
     await loadActivityCenter();
   }
 
+  async function createDirectTask(e) {
+    e.preventDefault();
+
+    if (!can("can_create")) {
+      setMessage("Action non autorisée.");
+      return;
+    }
+
+    if (!taskForm.title.trim()) {
+      setMessage("Tâche obligatoire.");
+      return;
+    }
+
+    const { error } = await supabase.from("weekly_tasks").insert({
+      topic_id: null,
+      title: taskForm.title.trim(),
+      description: taskForm.description.trim() || null,
+      assigned_to: taskForm.assigned_to || null,
+      due_date: taskForm.due_date || null,
+      status: "todo",
+      created_by: user?.id || null,
+      active: true,
+    });
+
+    if (error) {
+      setMessage(error.message);
+      return;
+    }
+
+    await emitEvent({
+      event_type: "TASK_CREATED",
+      entity_type: "workflow",
+      title: taskForm.title.trim(),
+      description: taskForm.description.trim() || null,
+      payload: {
+        assigned_to: taskForm.assigned_to || null,
+        due_date: taskForm.due_date || null,
+        standalone: true,
+      },
+      user,
+    });
+
+    setTaskForm({
+      title: "",
+      description: "",
+      assigned_to: "",
+      due_date: "",
+    });
+
+    setMessage("Tâche assignée sans sujet.");
+    await loadActivityCenter();
+  }
+
   async function archiveEvent(event) {
     if (!can("can_archive") && !can("can_edit")) {
       setMessage("Action non autorisée.");
@@ -300,6 +359,61 @@ export default function ActivityCenter({ user, permissions }) {
           <p>Créations et demandes.</p>
         </div>
       </div>
+
+      {can("can_create") && (
+        <div className="card">
+          <div className="page-head">
+            <div>
+              <h3>Attribuer une tâche</h3>
+              <p>Crée une tâche directement, sans devoir créer un sujet au préalable.</p>
+            </div>
+          </div>
+
+          <form className="activity-manual-form" onSubmit={createDirectTask}>
+            <div>
+              <label>Tâche</label>
+              <input
+                value={taskForm.title}
+                onChange={(e) => setTaskForm({ ...taskForm, title: e.target.value })}
+                placeholder="Ex : rappeler le fournisseur"
+              />
+            </div>
+
+            <div>
+              <label>Assignée à</label>
+              <select
+                value={taskForm.assigned_to}
+                onChange={(e) => setTaskForm({ ...taskForm, assigned_to: e.target.value })}
+              >
+                <option value="">Non assignée</option>
+                {employees.map((employee) => (
+                  <option key={employee.id} value={employee.id}>{employee.name}</option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label>Échéance</label>
+              <input
+                type="date"
+                value={taskForm.due_date}
+                onChange={(e) => setTaskForm({ ...taskForm, due_date: e.target.value })}
+              />
+            </div>
+
+            <div>
+              <label>Détail</label>
+              <input
+                value={taskForm.description}
+                onChange={(e) => setTaskForm({ ...taskForm, description: e.target.value })}
+                placeholder="Optionnel"
+              />
+            </div>
+
+            <button className="btn primary">Assigner</button>
+          </form>
+        </div>
+      )}
 
       {can("can_create") && (
         <div className="card">

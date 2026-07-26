@@ -3,6 +3,11 @@ import { supabase } from "../services/supabase.js";
 
 const CLOSURE_NAME = "Clôture du projet";
 
+function isClosureStep(step) {
+  const label = String(step?.name || step?.title || "").trim().toLowerCase();
+  return step?.is_closure === true || ["clôture du projet", "cloture du projet", "clôture projet", "cloture projet"].includes(label);
+}
+
 export default function Workflows({ user, permissions }) {
   const [templates, setTemplates] = useState([]);
   const [steps, setSteps] = useState([]);
@@ -55,15 +60,15 @@ export default function Workflows({ user, permissions }) {
 
   async function ensureClosureStep(templateId) {
     const templateSteps = steps.filter((step) => step.template_id === templateId && step.active !== false);
-    const closure = templateSteps.find((step) => step.is_closure);
+    const closure = templateSteps.find((step) => isClosureStep(step));
     const maxRegularOrder = templateSteps
-      .filter((step) => !step.is_closure)
+      .filter((step) => !isClosureStep(step))
       .reduce((max, step) => Math.max(max, Number(step.step_order || 0)), 0);
 
     if (closure) {
       await supabase
         .from("project_workflow_steps")
-        .update({ name: CLOSURE_NAME, step_order: maxRegularOrder + 1, active: true, is_closure: true })
+        .update({ name: CLOSURE_NAME, step_order: maxRegularOrder + 1, active: true,  })
         .eq("id", closure.id);
       return;
     }
@@ -74,7 +79,6 @@ export default function Workflows({ user, permissions }) {
       step_order: maxRegularOrder + 1,
       default_duration_days: 0,
       active: true,
-      is_closure: true,
     });
   }
 
@@ -97,7 +101,6 @@ export default function Workflows({ user, permissions }) {
       step_order: 1,
       default_duration_days: 0,
       active: true,
-      is_closure: true,
     });
 
     if (closureError) return setMessage(closureError.message);
@@ -138,7 +141,7 @@ export default function Workflows({ user, permissions }) {
     if (!selectedTemplateId) return setMessage("Sélectionne un workflow.");
     if (!stepName.trim()) return setMessage("Nom de l'étape obligatoire.");
 
-    const regularSteps = selectedSteps.filter((step) => !step.is_closure);
+    const regularSteps = selectedSteps.filter((step) => !isClosureStep(step));
     const nextOrder = regularSteps.reduce((max, step) => Math.max(max, Number(step.step_order || 0)), 0) + 1;
 
     const { error } = await supabase.from("project_workflow_steps").insert({
@@ -147,7 +150,6 @@ export default function Workflows({ user, permissions }) {
       step_order: nextOrder,
       default_duration_days: 1,
       active: true,
-      is_closure: false,
     });
     if (error) return setMessage(error.message);
 
@@ -155,8 +157,8 @@ export default function Workflows({ user, permissions }) {
     await loadData();
     // loadData refreshes local steps; normalize closure in a second pass from DB.
     const { data: refreshed } = await supabase.from("project_workflow_steps").select("*").eq("template_id", selectedTemplateId).eq("active", true);
-    const closure = (refreshed || []).find((step) => step.is_closure);
-    const maxOrder = (refreshed || []).filter((step) => !step.is_closure).reduce((max, step) => Math.max(max, Number(step.step_order || 0)), 0);
+    const closure = (refreshed || []).find((step) => isClosureStep(step));
+    const maxOrder = (refreshed || []).filter((step) => !isClosureStep(step)).reduce((max, step) => Math.max(max, Number(step.step_order || 0)), 0);
     if (closure) await supabase.from("project_workflow_steps").update({ step_order: maxOrder + 1, name: CLOSURE_NAME }).eq("id", closure.id);
     setMessage("Étape ajoutée avant la clôture.");
     await loadData();
@@ -164,7 +166,7 @@ export default function Workflows({ user, permissions }) {
 
   async function editStep(step) {
     if (!canEdit()) return setMessage("Action non autorisée.");
-    if (step.is_closure) return setMessage("La clôture est une étape système : elle doit toujours rester en dernière position.");
+    if (isClosureStep(step)) return setMessage("La clôture est une étape système : elle doit toujours rester en dernière position.");
 
     const name = window.prompt("Nom de l'étape ?", step.name);
     if (name === null || !name.trim()) return;
@@ -189,7 +191,7 @@ export default function Workflows({ user, permissions }) {
 
   async function deleteStep(step) {
     if (!canEdit()) return setMessage("Action non autorisée.");
-    if (step.is_closure) return setMessage("Impossible de supprimer l'étape « Clôture du projet ».");
+    if (isClosureStep(step)) return setMessage("Impossible de supprimer l'étape « Clôture du projet ».");
     if (!window.confirm(`Supprimer l'étape « ${step.name} » ?`)) return;
     const { error } = await supabase.from("project_workflow_steps").update({ active: false }).eq("id", step.id);
     if (error) return setMessage(error.message);
@@ -303,13 +305,13 @@ export default function Workflows({ user, permissions }) {
 
             <div className="workflow-step-list">
               {selectedSteps.map((step, index) => (
-                <div className={`workflow-step-row ${step.is_closure ? "workflow-closure-step" : ""}`} key={step.id}>
+                <div className={`workflow-step-row ${isClosureStep(step) ? "workflow-closure-step" : ""}`} key={step.id}>
                   <div className="workflow-step-order">{index + 1}</div>
                   <div>
-                    <strong>{step.is_closure ? `🔒 ${CLOSURE_NAME}` : step.name}</strong>
-                    <small>{step.is_closure ? "Étape système · archive le projet et termine la production dans le CRM" : `${Number(step.default_duration_days || 0)} jour(s)`}</small>
+                    <strong>{isClosureStep(step) ? `🔒 ${CLOSURE_NAME}` : step.name}</strong>
+                    <small>{isClosureStep(step) ? "Étape système · archive le projet et termine la production dans le CRM" : `${Number(step.default_duration_days || 0)} jour(s)`}</small>
                   </div>
-                  {!step.is_closure && (
+                  {!isClosureStep(step) && (
                     <div className="inline-actions">
                       <button className="btn small" onClick={() => editStep(step)}>Modifier</button>
                       <button className="btn small danger-soft" onClick={() => deleteStep(step)}>Supprimer</button>

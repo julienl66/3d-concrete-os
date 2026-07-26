@@ -3,6 +3,12 @@ import { supabase } from "../services/supabase.js";
 import CommercialSettings from "../components/CommercialSettings.jsx";
 import IntegrationSettings from "../components/IntegrationSettings.jsx";
 
+const CLOSURE_NAME = "Clôture du projet";
+function isClosureStep(step) {
+  const label = String(step?.name || step?.title || "").trim().toLowerCase();
+  return step?.is_closure === true || ["clôture du projet", "cloture du projet", "clôture projet", "cloture projet"].includes(label);
+}
+
 export default function Administration({ user }) {
   const [activities, setActivities] = useState([]);
   const [stockCategories, setStockCategories] = useState([]);
@@ -436,8 +442,7 @@ export default function Administration({ user }) {
         default_duration_days: 0,
         task_type_id: null,
         active: true,
-        is_closure: true,
-      });
+        });
 
     if (closureError) {
       setMessage(closureError.message);
@@ -506,8 +511,8 @@ export default function Administration({ user }) {
     }
 
     const templateSteps = workflowSteps.filter((step) => step.template_id === selectedTemplateId && step.active !== false);
-    const closure = templateSteps.find((step) => step.is_closure);
-    const regularSteps = templateSteps.filter((step) => !step.is_closure);
+    const closure = templateSteps.find((step) => isClosureStep(step));
+    const regularSteps = templateSteps.filter((step) => !isClosureStep(step));
     const nextOrder = regularSteps.reduce((max, step) => Math.max(max, Number(step.step_order || 0)), 0) + 1;
 
     const { error } = await supabase
@@ -519,8 +524,7 @@ export default function Administration({ user }) {
         default_duration_days: Number(workflowStepForm.default_duration_days || 1),
         task_type_id: workflowStepForm.task_type_id || null,
         active: true,
-        is_closure: false,
-      });
+        });
 
     if (error) {
       setMessage(error.message);
@@ -546,7 +550,7 @@ export default function Administration({ user }) {
   }
 
   async function editWorkflowStep(step) {
-    if (step.is_closure) {
+    if (isClosureStep(step)) {
       setMessage("La clôture est une étape système et doit toujours rester en dernière position.");
       return;
     }
@@ -578,7 +582,7 @@ export default function Administration({ user }) {
   }
 
   async function deleteWorkflowStep(step) {
-    if (step.is_closure) {
+    if (isClosureStep(step)) {
       setMessage("Impossible de supprimer l'étape « Clôture du projet ».");
       return;
     }
@@ -1161,7 +1165,7 @@ export default function Administration({ user }) {
                       </div>
 
                       <div className="inline-actions">
-                        {step.is_closure ? (
+                        {isClosureStep(step) ? (
                           <span className="status-pill">Étape système</span>
                         ) : (
                           <>

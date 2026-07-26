@@ -2,6 +2,11 @@ import { useEffect, useState } from "react";
 import { supabase } from "../services/supabase.js";
 import { emitEvent } from "../services/events.js";
 
+function isClosureStep(step) {
+  const label = String(step?.name || step?.title || "").trim().toLowerCase();
+  return step?.is_closure === true || ["clôture du projet", "cloture du projet", "clôture projet", "cloture projet"].includes(label);
+}
+
 export default function Projets({ user, permissions }) {
   const [projects, setProjects] = useState([]);
   const [requests, setRequests] = useState([]);
@@ -296,7 +301,7 @@ export default function Projets({ user, permissions }) {
     if (!templateId) return;
 
     const steps = workflowSteps
-      .filter((step) => step.template_id === templateId && !step.is_closure)
+      .filter((step) => step.template_id === templateId && !isClosureStep(step))
       .sort((a, b) => Number(a.step_order || 0) - Number(b.step_order || 0));
 
     if (steps.length === 0) return;
@@ -614,19 +619,18 @@ export default function Projets({ user, permissions }) {
       }
     }
 
-    const regularSteps = templateSteps.filter((step) => !step.is_closure);
-    const closureStep = templateSteps.find((step) => step.is_closure);
+    const regularSteps = templateSteps.filter((step) => !isClosureStep(step));
+    const closureStep = templateSteps.find((step) => isClosureStep(step));
     const normalized = [
       ...regularSteps,
-      closureStep || { name: "Clôture du projet", is_closure: true },
+      closureStep || { name: "Clôture du projet" },
     ];
 
     const rows = normalized.map((step, index) => ({
       project_id: project.id,
-      title: step.is_closure ? "Clôture du projet" : step.name,
+      title: isClosureStep(step) ? "Clôture du projet" : step.name,
       step_order: index + 1,
       done: false,
-      is_closure: !!step.is_closure,
     }));
 
     const { error: insertError } = await supabase.from("project_steps").insert(rows);
@@ -685,7 +689,7 @@ export default function Projets({ user, permissions }) {
 
     if (stepsError) return setMessage(stepsError.message);
 
-    const unfinished = (allSteps || []).filter((step) => !step.is_closure && !step.done);
+    const unfinished = (allSteps || []).filter((step) => !isClosureStep(step) && !step.done);
     if (unfinished.length > 0) {
       setMessage(`Impossible de clôturer : ${unfinished.length} étape(s) ne sont pas encore terminée(s).`);
       return;
@@ -1065,7 +1069,6 @@ export default function Projets({ user, permissions }) {
       title: title === "Clôture projet" ? "Clôture du projet" : title,
       step_order: index + 1,
       done: false,
-      is_closure: title === "Clôture projet",
     }));
 
     const { error } = await supabase.from("project_steps").insert(rows);
@@ -1085,8 +1088,8 @@ export default function Projets({ user, permissions }) {
     const title = window.prompt("Nom de la nouvelle étape ?");
     if (!title) return;
 
-    const closure = projectSteps.find((step) => step.is_closure);
-    const regularSteps = projectSteps.filter((step) => !step.is_closure);
+    const closure = projectSteps.find((step) => isClosureStep(step));
+    const regularSteps = projectSteps.filter((step) => !isClosureStep(step));
     const nextOrder = regularSteps.length > 0
       ? Math.max(...regularSteps.map((step) => Number(step.step_order || 0))) + 1
       : 1;
@@ -1096,7 +1099,6 @@ export default function Projets({ user, permissions }) {
       title,
       step_order: nextOrder,
       done: false,
-      is_closure: false,
     });
 
     if (!error && closure) {
@@ -1115,7 +1117,7 @@ export default function Projets({ user, permissions }) {
   }
 
   async function toggleProjectStep(step) {
-    if (step.is_closure) {
+    if (isClosureStep(step)) {
       if (step.done) {
         setMessage("Un projet clôturé ne se rouvre pas depuis cette étape. Restaure-le depuis les projets archivés si nécessaire.");
         return;
@@ -1146,7 +1148,7 @@ export default function Projets({ user, permissions }) {
   }
 
   async function renameProjectStep(step) {
-    if (step.is_closure) {
+    if (isClosureStep(step)) {
       setMessage("L'étape de clôture est verrouillée.");
       return;
     }
@@ -1168,7 +1170,7 @@ export default function Projets({ user, permissions }) {
   }
 
   async function deleteProjectStep(step) {
-    if (step.is_closure) {
+    if (isClosureStep(step)) {
       setMessage("Impossible de supprimer l'étape de clôture.");
       return;
     }

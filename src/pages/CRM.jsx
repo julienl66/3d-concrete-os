@@ -289,9 +289,40 @@ export default function CRM({ user, permissions }) {
 
   function linkedProject(contact) {
     if (!contact) return null;
+    // Les colonnes Validé / En production / Production terminée sont pilotées
+    // directement par les projets. Une entrée de cycle peut donc porter son
+    // projet explicitement, ce qui permet plusieurs projets pour un même client.
+    if (contact.__project) return contact.__project;
+
+    const crmContactId = contact.__crm_contact_id || contact.id;
     return projects.find((project) => project.id === contact.project_id)
-      || projects.find((project) => project.crm_contact_id === contact.id)
+      || projects.find((project) => project.crm_contact_id === crmContactId)
       || null;
+  }
+
+  function lifecycleEntryForProject(project) {
+    const baseContact = contacts.find((contact) => contact.id === project.crm_contact_id)
+      || contacts.find((contact) => contact.project_id === project.id)
+      || null;
+
+    return {
+      ...(baseContact || {}),
+      id: `project:${project.id}`,
+      __crm_contact_id: baseContact?.id || project.crm_contact_id || null,
+      __project: project,
+      company_name: project.client_name || baseContact?.company_name || project.name || "Client à compléter",
+      estimated_amount: Number(project.sale_amount || baseContact?.estimated_amount || 0),
+      expected_signature_month: project.signed_date
+        ? String(project.signed_date).slice(0, 7)
+        : (baseContact?.expected_signature_month || null),
+      project_id: project.id,
+    };
+  }
+
+  function actualContactForLifecycle(entry) {
+    if (!entry) return null;
+    const crmContactId = entry.__crm_contact_id || entry.id;
+    return contacts.find((contact) => contact.id === crmContactId) || entry;
   }
 
   function opportunityLifecycle(contact) {
@@ -527,15 +558,21 @@ export default function CRM({ user, permissions }) {
     cold: lifecycleContacts
       .filter((contact) => opportunityLifecycle(contact) === "opportunity" && opportunityTemperature(contact) === "cold")
       .sort((a, b) => daysSinceLastActivity(b.id) - daysSinceLastActivity(a.id)),
-    validated: lifecycleContacts
-      .filter((contact) => opportunityLifecycle(contact) === "validated")
-      .sort((a, b) => String(linkedProject(b)?.signed_date || b.updated_at || "").localeCompare(String(linkedProject(a)?.signed_date || a.updated_at || ""))),
-    in_production: lifecycleContacts
-      .filter((contact) => opportunityLifecycle(contact) === "in_production")
-      .sort((a, b) => String(linkedProject(b)?.production_start_date || b.updated_at || "").localeCompare(String(linkedProject(a)?.production_start_date || a.updated_at || ""))),
-    production_completed: lifecycleContacts
-      .filter((contact) => opportunityLifecycle(contact) === "production_completed")
-      .sort((a, b) => String(linkedProject(b)?.production_end_date || b.updated_at || "").localeCompare(String(linkedProject(a)?.production_end_date || a.updated_at || ""))),
+    // À partir de la validation, le cycle est projet-centrique : un même client
+    // peut avoir plusieurs projets, chacun avec son propre statut. Les colonnes
+    // CRM deviennent ainsi une retranscription exacte de projects.status.
+    validated: projects
+      .filter((project) => ["validated", "planned"].includes(project.status))
+      .map(lifecycleEntryForProject)
+      .sort((a, b) => String(linkedProject(b)?.signed_date || "").localeCompare(String(linkedProject(a)?.signed_date || ""))),
+    in_production: projects
+      .filter((project) => project.status === "in_production")
+      .map(lifecycleEntryForProject)
+      .sort((a, b) => String(linkedProject(b)?.production_start_date || "").localeCompare(String(linkedProject(a)?.production_start_date || ""))),
+    production_completed: projects
+      .filter((project) => ["ready", "completed"].includes(project.status))
+      .map(lifecycleEntryForProject)
+      .sort((a, b) => String(linkedProject(b)?.production_end_date || "").localeCompare(String(linkedProject(a)?.production_end_date || ""))),
     lost: filteredContacts
       .filter((contact) => contact.status === "active" && isLostStage(contact.stage_id))
       .sort((a, b) => String(b.updated_at || b.created_at || "").localeCompare(String(a.updated_at || a.created_at || ""))),
@@ -1257,7 +1294,7 @@ export default function CRM({ user, permissions }) {
       entity_id: project.id,
       title: `Production lancée : ${project.name}`,
       description: contact.company_name,
-      payload: { production_start_date: productionStartDate, crm_contact_id: contact.id },
+      payload: { production_start_date: productionStartDate, crm_contact_id: contact.__crm_contact_id || contact.id },
       user,
     });
 
@@ -2944,10 +2981,11 @@ export default function CRM({ user, permissions }) {
                     <div className="crm-temperature-empty">Aucune opportunité dans cette catégorie.</div>
                   ) : (
                     items.map((contact) => {
-                      const nextAction = nextActionForContact(contact.id);
-                      const inactivity = daysSinceLastActivity(contact.id);
+                      const lifecycleContactId = contact.__crm_contact_id || contact.id;
+                      const nextAction = nextActionForContact(lifecycleContactId);
+                      const inactivity = daysSinceLastActivity(lifecycleContactId);
                       return (
-                        <article className="crm-temperature-card" key={contact.id} onClick={() => setSelectedContact(contact)}>
+                        <article className="crm-temperature-card" key={contact.id} onClick={() => setSelectedContact(actualContactForLifecycle(contact))}>
                           <div className="crm-temperature-card-head">
                             <div>
                               <strong>{contact.company_name}</strong>
@@ -2998,7 +3036,7 @@ export default function CRM({ user, permissions }) {
                                 <button className="btn small danger-soft" onClick={(e) => { e.stopPropagation(); deleteOpportunityDirectly(contact); }}>Retirer du pipeline</button>
                               </>
                             )}
-                            <button className="btn small" onClick={(e) => { e.stopPropagation(); setSelectedContact(contact); }}>Ouvrir</button>
+                            <button className="btn small" onClick={(e) => { e.stopPropagation(); setSelectedContact(actualContactForLifecycle(contact)); }}>Ouvrir</button>
                           </div>
                         </article>
                       );

@@ -729,7 +729,6 @@ export default function Projets({ user, permissions }) {
         status: "completed",
         progress_percent: 100,
         workflow_status: "completed",
-        completed_at: now,
         production_end_date: project.production_end_date || today,
       })
       .eq("id", project.id);
@@ -1907,7 +1906,7 @@ export default function Projets({ user, permissions }) {
                     <p>{project.client_name || "-"}</p>
                     <div className="project-tile-meta">
                       <span>{project.status === "completed" ? "100 %" : `${progress(project)} %`}</span>
-                      <span>{project.completed_at ? `Clôturé ${formatDateTime(project.completed_at)}` : "Archivé"}</span>
+                      <span>{project.production_end_date ? `Clôturé ${formatDate(project.production_end_date)}` : "Archivé"}</span>
                     </div>
                     <div className="inline-actions">
                       <button className="btn small" onClick={() => openProject(project)}>Consulter</button>

@@ -259,6 +259,18 @@ export default function Pointage({ user }) {
     await loadPeriodEvents();
   }
 
+  // Supabase peut renvoyer event_time sans suffixe de fuseau lorsque la colonne SQL
+  // est un timestamp sans timezone. Dans ce cas la valeur stockée correspond à UTC :
+  // on l’interprète explicitement comme UTC pour éviter un décalage de +2 h en France.
+  function parseEventDate(value) {
+    if (!value) return null;
+    if (value instanceof Date) return value;
+
+    const text = String(value);
+    const hasTimezone = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(text);
+    return new Date(hasTimezone ? text : `${text}Z`);
+  }
+
   const latestEvent = events.length ? events[events.length - 1] : null;
 
   const status = useMemo(() => {
@@ -275,7 +287,7 @@ export default function Pointage({ user }) {
       const event = events[index];
 
       if (event.event_type === "ARRIVAL" || event.event_type === "RESUME") {
-        return new Date(event.event_time);
+        return parseEventDate(event.event_time);
       }
 
       if (event.event_type === "PAUSE" || event.event_type === "DEPART") {
@@ -402,11 +414,11 @@ export default function Pointage({ user }) {
 
     sourceEvents.forEach((event) => {
       if (event.event_type === "ARRIVAL" || event.event_type === "RESUME") {
-        start = new Date(event.event_time);
+        start = parseEventDate(event.event_time);
       }
 
       if ((event.event_type === "PAUSE" || event.event_type === "DEPART") && start) {
-        total += new Date(event.event_time) - start;
+        total += parseEventDate(event.event_time) - start;
         start = null;
       }
     });
@@ -428,7 +440,7 @@ export default function Pointage({ user }) {
       }
 
       if ((event.event_type === "PAUSE" || event.event_type === "DEPART") && startEvent) {
-        const ms = new Date(event.event_time) - new Date(startEvent.event_time);
+        const ms = parseEventDate(event.event_time) - parseEventDate(startEvent.event_time);
 
         if (ms > 0) {
           segments.push({
@@ -450,7 +462,7 @@ export default function Pointage({ user }) {
         activity_id: startEvent.activity_id,
         start: startEvent.event_time,
         end: now.toISOString(),
-        ms: now - new Date(startEvent.event_time),
+        ms: now - parseEventDate(startEvent.event_time),
       });
     }
 
@@ -645,7 +657,7 @@ export default function Pointage({ user }) {
 
     const last = employeeEvents[employeeEvents.length - 1];
     if (last && (last.event_type === "ARRIVAL" || last.event_type === "RESUME")) {
-      total += now - new Date(last.event_time);
+      total += now - parseEventDate(last.event_time);
     }
 
     return total;

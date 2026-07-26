@@ -662,7 +662,11 @@ export default function Dashboard({ user }) {
 
   const maxMonthlyRevenue = Math.max(1, ...revenueByMonth.map((row) => row.total));
 
-  const employeesNow = latestEmployeeEvents();
+  // Atelier en direct : uniquement les salariés dont une pointeuse tourne réellement.
+  // Un dernier événement PAUSE ou DEPART ne doit pas apparaître comme un suivi actif.
+  const employeesNow = latestEmployeeEvents().filter((event) =>
+    ["ARRIVAL", "RESUME"].includes(event.event_type)
+  );
 
   function crmContactName(contactId) {
     const contact = crmContacts.find((item) => item.id === contactId);

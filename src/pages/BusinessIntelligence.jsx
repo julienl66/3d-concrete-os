@@ -72,8 +72,18 @@ export default function BusinessIntelligence({ user, permissions }) {
       )
       .subscribe();
 
+    const revenueChannel = supabase
+      .channel("bi-revenue-live")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "revenue_entries" },
+        () => loadData()
+      )
+      .subscribe();
+
     return () => {
       supabase.removeChannel(projectsChannel);
+      supabase.removeChannel(revenueChannel);
     };
   }, []);
 
@@ -171,6 +181,21 @@ export default function BusinessIntelligence({ user, permissions }) {
     }
 
     setMessage("Date de signature / CA mise à jour. Le tableau de bord est synchronisé automatiquement.");
+    await loadData();
+  }
+
+  async function updateManualRevenueDate(entryId, nextDate) {
+    const { error } = await supabase
+      .from("revenue_entries")
+      .update({ entry_date: nextDate || null })
+      .eq("id", entryId);
+
+    if (error) {
+      setMessage(error.message);
+      return;
+    }
+
+    setMessage("Date de CA manuel mise à jour. Tableau de bord et BI sont synchronisés.");
     await loadData();
   }
 
@@ -381,15 +406,27 @@ export default function BusinessIntelligence({ user, permissions }) {
     projects.filter((project) => Boolean(project.signed_date)),
   [projects]);
 
+  const manualRevenueRows = useMemo(() =>
+    revenueEntries.filter((entry) => Number(entry.amount || 0) !== 0 && Boolean(entry.entry_date || entry.created_at)),
+  [revenueEntries]);
+
   const availableYears = useMemo(() => {
     const years = new Set([new Date().getFullYear()]);
+
     validatedSignedProjects.forEach((project) => {
       const date = parseDateOnly(project.signed_date);
       const year = date?.getFullYear();
       if (Number.isFinite(year)) years.add(year);
     });
+
+    manualRevenueRows.forEach((entry) => {
+      const date = parseDateOnly(entry.entry_date || entry.created_at);
+      const year = date?.getFullYear();
+      if (Number.isFinite(year)) years.add(year);
+    });
+
     return [...years].sort((a, b) => b - a);
-  }, [validatedSignedProjects]);
+  }, [validatedSignedProjects, manualRevenueRows]);
 
   const monthlyRevenue = useMemo(() => {
     return Array.from({ length: 12 }, (_, index) => {
@@ -398,15 +435,26 @@ export default function BusinessIntelligence({ user, permissions }) {
         return date?.getFullYear() === selectedYear && date?.getMonth() === index;
       });
 
+      const monthManualEntries = manualRevenueRows.filter((entry) => {
+        const date = parseDateOnly(entry.entry_date || entry.created_at);
+        return date?.getFullYear() === selectedYear && date?.getMonth() === index;
+      });
+
+      const projectValue = monthProjects.reduce((sum, project) => sum + Number(project.sale_amount || 0), 0);
+      const manualValue = monthManualEntries.reduce((sum, entry) => sum + Number(entry.amount || 0), 0);
+
       return {
         label: new Date(selectedYear, index, 1).toLocaleDateString("fr-FR", { month: "short" }),
         fullLabel: new Date(selectedYear, index, 1).toLocaleDateString("fr-FR", { month: "long" }),
-        value: monthProjects.reduce((sum, project) => sum + Number(project.sale_amount || 0), 0),
-        count: monthProjects.length,
+        value: projectValue + manualValue,
+        projectValue,
+        manualValue,
+        count: monthProjects.length + monthManualEntries.length,
         projects: monthProjects,
+        manualEntries: monthManualEntries,
       };
     });
-  }, [validatedSignedProjects, selectedYear]);
+  }, [validatedSignedProjects, manualRevenueRows, selectedYear]);
 
   const selectedYearRevenue = monthlyRevenue.reduce((sum, row) => sum + row.value, 0);
 
@@ -738,7 +786,7 @@ export default function BusinessIntelligence({ user, permissions }) {
               <div className="bi-section-head">
                 <div>
                   <h3>CA signé mensuel — {selectedYear}</h3>
-                  <p>Tous les projets signés, classés selon leur date de signature, quel que soit leur statut actuel.</p>
+                  <p>Même CA que le Tableau de bord : projets selon leur date de signature + lignes de CA manuel selon leur date.</p>
                 </div>
                 <strong>{formatMoney(selectedYearRevenue)}</strong>
               </div>
@@ -767,8 +815,8 @@ export default function BusinessIntelligence({ user, permissions }) {
           <div className="card bi-monthly-table-card">
             <div className="bi-section-head">
               <div>
-                <h3>Détail mensuel des projets signés</h3>
-                <p>La liste se met à jour automatiquement après validation d'un projet.</p>
+                <h3>Détail mensuel du CA</h3>
+                <p>Projets signés et CA manuel utilisent les mêmes dates que le Tableau de bord.</p>
               </div>
             </div>
 
@@ -777,7 +825,7 @@ export default function BusinessIntelligence({ user, permissions }) {
                 <thead>
                   <tr>
                     <th>Mois</th>
-                    <th>Projets signés</th>
+                    <th>Éléments de CA</th>
                     <th>CA signé HT</th>
                   </tr>
                 </thead>
@@ -797,6 +845,21 @@ export default function BusinessIntelligence({ user, permissions }) {
                                   value={project.signed_date || ""}
                                   onChange={(e) => updateProjectSignedDate(project.id, e.target.value)}
                                   title="Modifier la date de CA / signature"
+                                />
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        {row.manualEntries.length > 0 && (
+                          <div className="bi-project-names" style={{ display: "grid", gap: 6, marginTop: 6 }}>
+                            {row.manualEntries.map((entry) => (
+                              <div key={`manual-${entry.id}`} style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                                <span>CA manuel · {entry.label || "Sans libellé"} · {formatMoney(entry.amount)}</span>
+                                <input
+                                  type="date"
+                                  value={String(entry.entry_date || "").slice(0, 10)}
+                                  onChange={(e) => updateManualRevenueDate(entry.id, e.target.value)}
+                                  title="Modifier la date du CA manuel"
                                 />
                               </div>
                             ))}

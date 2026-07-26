@@ -134,6 +134,15 @@ export default function Projets({ user, permissions }) {
       return;
     }
 
+    const { data: typeWorkflowAssignments, error: typeWorkflowError } = await supabase
+      .from("project_type_workflow_assignments")
+      .select("project_type_id, workflow_template_id");
+
+    if (typeWorkflowError) {
+      setMessage(typeWorkflowError.message);
+      return;
+    }
+
     const { data: annexCostsData, error: annexCostsError } = await supabase
       .from("project_cost_entries")
       .select("*")
@@ -145,7 +154,11 @@ export default function Projets({ user, permissions }) {
       return;
     }
 
-    setProjectTypes(projectTypesData || []);
+    const workflowByType = new Map((typeWorkflowAssignments || []).map((row) => [row.project_type_id, row.workflow_template_id]));
+    setProjectTypes((projectTypesData || []).map((type) => ({
+      ...type,
+      default_workflow_template_id: workflowByType.get(type.id) || null,
+    })));
     setAnnexCosts(annexCostsData || []);
 
     const { data: stockItemsData, error: stockItemsError } = await supabase
@@ -1116,35 +1129,65 @@ export default function Projets({ user, permissions }) {
     await loadData();
   }
 
+  function stepValidationState(step) {
+    const ordered = [...projectSteps].sort(
+      (a, b) => Number(a.step_order || 0) - Number(b.step_order || 0)
+    );
+    const index = ordered.findIndex((item) => item.id === step.id);
+    const previousSteps = index > 0 ? ordered.slice(0, index) : [];
+    const previousDone = previousSteps.every((item) => item.done);
+
+    if (step.done) return { canValidate: false, label: "Terminée", reason: "" };
+    if (!previousDone) {
+      return { canValidate: false, label: "En attente", reason: "Valide d’abord l’étape précédente." };
+    }
+    if (isClosureStep(step)) return { canValidate: true, label: "Clôturer le projet", reason: "" };
+    return { canValidate: true, label: "Valider l’étape", reason: "" };
+  }
+
   async function toggleProjectStep(step) {
-    if (isClosureStep(step)) {
-      if (step.done) {
+    if (!selectedProject) return;
+    const validation = stepValidationState(step);
+
+    if (step.done) {
+      if (isClosureStep(step)) {
         setMessage("Un projet clôturé ne se rouvre pas depuis cette étape. Restaure-le depuis les projets archivés si nécessaire.");
         return;
       }
+      const ok = window.confirm(`Remettre l’étape « ${step.title} » en cours ?`);
+      if (!ok) return;
+      const { error } = await supabase
+        .from("project_steps")
+        .update({ done: false, done_at: null })
+        .eq("id", step.id);
+      if (error) return setMessage(error.message);
+      await recalculateProjectProgress(selectedProject.id);
+      await loadProjectDetails(selectedProject);
+      await loadData();
+      setMessage("Étape remise en cours.");
+      return;
+    }
+
+    if (!validation.canValidate) {
+      setMessage(validation.reason || "Cette étape ne peut pas encore être validée.");
+      return;
+    }
+
+    if (isClosureStep(step)) {
       await completeProjectFromWorkflow(selectedProject, step);
       return;
     }
 
-    const done = !step.done;
-
     const { error } = await supabase
       .from("project_steps")
-      .update({
-        done,
-        done_at: done ? new Date().toISOString() : null,
-      })
+      .update({ done: true, done_at: new Date().toISOString() })
       .eq("id", step.id);
+    if (error) return setMessage(error.message);
 
-    if (error) {
-      setMessage(error.message);
-      return;
-    }
-
-    setMessage(done ? "Étape terminée." : "Étape remise en cours.");
-    await loadProjectDetails(selectedProject);
     await recalculateProjectProgress(selectedProject.id);
+    await loadProjectDetails(selectedProject);
     await loadData();
+    setMessage(`Étape « ${step.title} » validée. L’étape suivante est maintenant disponible.`);
   }
 
   async function renameProjectStep(step) {
@@ -2193,30 +2236,39 @@ export default function Projets({ user, permissions }) {
                 <p>Aucune étape. Choisis un workflow pour générer automatiquement le parcours du projet.</p>
               ) : (
                 <div className="steps-list">
-                  {projectSteps.map((step) => (
-                    <div className={step.done ? "step-row done" : "step-row"} key={step.id}>
-                      <button className="step-check" onClick={() => toggleProjectStep(step)}>
-                        {step.done ? "✓" : ""}
-                      </button>
-
-                      <div>
-                        <strong>{step.title}</strong>
-                        <small>
-                          Ordre {step.step_order || "-"}
-                          {step.done_at ? ` · terminé le ${formatDateTime(step.done_at)}` : ""}
-                        </small>
-                      </div>
-
-                      <div className="inline-actions">
-                        <button className="btn small" onClick={() => renameProjectStep(step)}>
-                          Renommer
+                  {projectSteps.map((step) => {
+                    const validation = stepValidationState(step);
+                    return (
+                      <div className={step.done ? "step-row done" : "step-row"} key={step.id}>
+                        <button
+                          className={isClosureStep(step) ? "btn primary" : "btn small primary"}
+                          onClick={() => toggleProjectStep(step)}
+                          disabled={!step.done && !validation.canValidate}
+                          title={validation.reason || ""}
+                        >
+                          {step.done ? "✓ Terminée" : validation.label}
                         </button>
-                        <button className="btn small danger-soft" onClick={() => deleteProjectStep(step)}>
-                          Supprimer
-                        </button>
+
+                        <div style={{ flex: 1 }}>
+                          <strong>{step.title}</strong>
+                          <small>
+                            Ordre {step.step_order || "-"}
+                            {step.done_at ? ` · terminé le ${formatDateTime(step.done_at)}` : ""}
+                            {!step.done && validation.reason ? ` · ${validation.reason}` : ""}
+                          </small>
+                        </div>
+
+                        <div className="inline-actions">
+                          <button className="btn small" onClick={() => renameProjectStep(step)} disabled={isClosureStep(step)}>
+                            Renommer
+                          </button>
+                          <button className="btn small danger-soft" onClick={() => deleteProjectStep(step)} disabled={isClosureStep(step)}>
+                            Supprimer
+                          </button>
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>

@@ -33,13 +33,14 @@ export default function Workflows({ user, permissions }) {
 
   async function loadData() {
     setMessage("");
-    const [templatesResult, stepsResult, typesResult] = await Promise.all([
+    const [templatesResult, stepsResult, typesResult, typeWorkflowResult] = await Promise.all([
       supabase.from("project_workflow_templates").select("*").eq("active", true).order("name"),
       supabase.from("project_workflow_steps").select("*").eq("active", true).order("step_order"),
       supabase.from("project_types").select("*").eq("active", true).order("name"),
+      supabase.from("project_type_workflow_assignments").select("project_type_id, workflow_template_id"),
     ]);
 
-    const error = templatesResult.error || stepsResult.error || typesResult.error;
+    const error = templatesResult.error || stepsResult.error || typesResult.error || typeWorkflowResult.error;
     if (error) {
       setMessage(error.message);
       return;
@@ -47,7 +48,11 @@ export default function Workflows({ user, permissions }) {
 
     setTemplates(templatesResult.data || []);
     setSteps(stepsResult.data || []);
-    setProjectTypes(typesResult.data || []);
+    const workflowByType = new Map((typeWorkflowResult.data || []).map((row) => [row.project_type_id, row.workflow_template_id]));
+    setProjectTypes((typesResult.data || []).map((type) => ({
+      ...type,
+      default_workflow_template_id: workflowByType.get(type.id) || null,
+    })));
   }
 
   const selectedTemplate = templates.find((template) => template.id === selectedTemplateId) || null;
@@ -203,10 +208,24 @@ export default function Workflows({ user, permissions }) {
 
   async function setCategoryWorkflow(type, templateId) {
     if (!canEdit()) return setMessage("Action non autorisée.");
-    const { error } = await supabase
-      .from("project_types")
-      .update({ default_workflow_template_id: templateId || null })
-      .eq("id", type.id);
+
+    let error = null;
+    if (templateId) {
+      const result = await supabase
+        .from("project_type_workflow_assignments")
+        .upsert(
+          { project_type_id: type.id, workflow_template_id: templateId },
+          { onConflict: "project_type_id" }
+        );
+      error = result.error;
+    } else {
+      const result = await supabase
+        .from("project_type_workflow_assignments")
+        .delete()
+        .eq("project_type_id", type.id);
+      error = result.error;
+    }
+
     if (error) return setMessage(error.message);
     setMessage(`Workflow de la catégorie « ${type.name} » mis à jour.`);
     await loadData();

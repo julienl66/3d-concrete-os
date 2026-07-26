@@ -391,28 +391,42 @@ export default function CRM({ user, permissions }) {
   function hasExplicitPipelineEntry(contact) {
     if (!contact) return false;
     if (linkedProject(contact) || isWonStage(contact.stage_id) || isLostStage(contact.stage_id)) return true;
+
+    // Une opportunité multi-opportunités explicitement activée appartient au pipeline,
+    // même si le contact reste aussi présent dans le vivier comme fiche client/prospect.
+    const hasActiveStoredOpportunity = contactOpportunities.some((item) =>
+      item.contact_id === contact.id && ["active", "validated"].includes(String(item.status || "").toLowerCase())
+    );
+    if (hasActiveStoredOpportunity) return true;
+
     if (contact.status !== "active" || !contact.stage_id) return false;
 
     const firstStage = firstCommercialStage();
     const currentStage = stages.find((stage) => stage.id === contact.stage_id);
-    const currentProbability = Number(contact.probability_percent ?? contact.probability ?? 0);
-    const defaultFirstStageProbability = Number(firstStage?.default_probability_percent ?? 5);
 
-    // Une étape plus avancée que « Suspect ciblé » constitue une entrée volontaire dans le pipeline.
+    // Toute étape réellement avancée après « Suspect ciblé » est une opportunité.
     if (currentStage && firstStage && Number(currentStage.stage_order || 0) > Number(firstStage.stage_order || 0)) return true;
 
-    // Une probabilité réellement qualifiée conserve les opportunités chaudes, tièdes ou froides existantes.
-    // La valeur automatique de l'étape « Suspect ciblé » (généralement 5 %) ne suffit pas à sortir le contact du vivier.
-    if (currentProbability > defaultFirstStageProbability) return true;
-
+    // Sur la première étape, on exige une action volontaire. On ne se base plus sur
+    // une ancienne probabilité héritée/importée, sinon tout le vivier retombe dans Pipe froid.
     return contactInteractions(contact.id).some((item) => {
       const type = String(item.interaction_type || "").toLowerCase();
       const subject = String(item.subject || "").toLowerCase();
-      return ["appel", "email", "rdv", "devis", "relance"].includes(type)
-        || subject.includes("prospect ciblé")
+      const notes = String(item.notes || "").toLowerCase();
+      const imported = subject.includes("import csv") || notes.includes("import csv");
+      if (imported) return false;
+
+      const explicitMarker =
+        subject.includes("prospect ciblé")
         || subject.includes("opportunité créée")
         || subject.includes("qualifiée par probabilité")
         || subject.includes("ajouté manuellement depuis le vivier");
+
+      // Un vrai contact commercial manuel fait également entrer le prospect dans le pipeline.
+      // Une simple relance historique/importée ne suffit plus.
+      const realCommercialAction = ["appel", "email", "rdv", "devis"].includes(type);
+
+      return explicitMarker || realCommercialAction;
     });
   }
 
@@ -555,6 +569,8 @@ export default function CRM({ user, permissions }) {
     warm: lifecycleContacts
       .filter((contact) => opportunityLifecycle(contact) === "opportunity" && opportunityTemperature(contact) === "warm")
       .sort((a, b) => opportunityScore(b) - opportunityScore(a)),
+    // Pipe froid = uniquement les opportunités réellement entrées dans le pipeline.
+    // Le vivier est exclu en amont par isPipelineContact/hasExplicitPipelineEntry.
     cold: lifecycleContacts
       .filter((contact) => opportunityLifecycle(contact) === "opportunity" && opportunityTemperature(contact) === "cold")
       .sort((a, b) => daysSinceLastActivity(b.id) - daysSinceLastActivity(a.id)),

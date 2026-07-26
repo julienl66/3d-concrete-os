@@ -407,8 +407,14 @@ export default function CRM({ user, permissions }) {
     // Toute étape réellement avancée après « Suspect ciblé » est une opportunité.
     if (currentStage && firstStage && Number(currentStage.stage_order || 0) > Number(firstStage.stage_order || 0)) return true;
 
-    // Sur la première étape, on exige une action volontaire. On ne se base plus sur
-    // une ancienne probabilité héritée/importée, sinon tout le vivier retombe dans Pipe froid.
+    // Sur la première étape, une qualification suffisamment forte doit rester une vraie opportunité.
+    // Cela restaure notamment les opportunités chaudes/tièdes déjà qualifiées avant la séparation du vivier.
+    // En revanche, les faibles probabilités historiques (5/20/30 %) ne suffisent toujours pas à faire
+    // entrer automatiquement tout le vivier dans Pipe froid.
+    const qualifiedProbability = Number(contact.probability_percent || contact.probability || 0);
+    if (qualifiedProbability >= 40) return true;
+
+    // Pour une opportunité froide sur la première étape, on exige toujours une action volontaire.
     return contactInteractions(contact.id).some((item) => {
       const type = String(item.interaction_type || "").toLowerCase();
       const subject = String(item.subject || "").toLowerCase();

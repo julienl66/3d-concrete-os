@@ -102,6 +102,19 @@ export default function CRM({ user, permissions }) {
   }, []);
 
   useEffect(() => {
+    const channel = supabase
+      .channel("projects-sync-crm")
+      .on("postgres_changes", { event: "*", schema: "public", table: "projects" }, () => {
+        loadData();
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, []);
+
+  useEffect(() => {
     if (!selectedContact) {
       setOpportunityForm(null);
       return;

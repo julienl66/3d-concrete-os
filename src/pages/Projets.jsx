@@ -62,6 +62,19 @@ export default function Projets({ user, permissions }) {
     loadData();
   }, []);
 
+  useEffect(() => {
+    const channel = supabase
+      .channel("projects-sync-projets")
+      .on("postgres_changes", { event: "*", schema: "public", table: "projects" }, () => {
+        loadData();
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, []);
+
   async function loadData() {
     const { data: projectsData, error: projectsError } = await supabase
       .from("projects")
@@ -347,6 +360,34 @@ export default function Projets({ user, permissions }) {
     }
   }
 
+  async function ensureCrmContactForProjectRequest(request) {
+    if (request?.crm_contact_id) return request.crm_contact_id;
+
+    const normalizedClient = String(request?.client_name || "").trim().toLowerCase();
+    if (!normalizedClient) return null;
+
+    const existing = crmContacts.find((contact) =>
+      String(contact.company_name || "").trim().toLowerCase() === normalizedClient
+    );
+    if (existing) return existing.id;
+
+    const { data: createdContact, error } = await supabase
+      .from("crm_contacts")
+      .insert({
+        company_name: request.client_name,
+        status: "active",
+      })
+      .select("id")
+      .single();
+
+    if (error) {
+      setMessage(`Impossible de créer/lier le client CRM : ${error.message}`);
+      return null;
+    }
+
+    return createdContact?.id || null;
+  }
+
   async function validateRequest(request) {
     if (!hasRight("can_validate")) {
       setMessage("Action non autorisée.");
@@ -401,12 +442,19 @@ export default function Projets({ user, permissions }) {
       return;
     }
 
+    const crmContactId = await ensureCrmContactForProjectRequest(request);
+    if (!crmContactId) {
+      setMessage("Le projet ne peut pas être validé sans fiche client CRM liée.");
+      return;
+    }
+
     const { data: project, error: projectError } = await supabase
       .from("projects")
       .insert({
         project_code: generateProjectCode(),
         name: request.project_name,
         client_name: request.client_name,
+        crm_contact_id: crmContactId,
         description: request.description,
         active: true,
         status: "validated",
@@ -428,6 +476,11 @@ export default function Projets({ user, permissions }) {
       setMessage(projectError.message);
       return;
     }
+
+    await supabase
+      .from("crm_contacts")
+      .update({ project_id: project.id, status: "active" })
+      .eq("id", crmContactId);
 
     await generateWorkflowTasks(
       project,
@@ -1006,6 +1059,61 @@ export default function Projets({ user, permissions }) {
     await updateProject(project, { status: statuses[choice - 1] });
   }
 
+  async function startProjectProduction(project) {
+    if (!hasRight("can_edit")) {
+      setMessage("Action non autorisée.");
+      return;
+    }
+
+    if (!project || !["validated", "planned"].includes(project.status)) {
+      setMessage("Ce projet ne peut pas être lancé en production depuis son statut actuel.");
+      return;
+    }
+
+    const ok = window.confirm(`Lancer la production du projet « ${project.name} » ?`);
+    if (!ok) return;
+
+    const defaultDate = new Date().toISOString().slice(0, 10);
+    const productionStartDate = window.prompt(
+      "Date de lancement en production (AAAA-MM-JJ) ?",
+      project.production_start_date || defaultDate
+    );
+    if (productionStartDate === null) return;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(productionStartDate)) {
+      setMessage("La date de production doit être au format AAAA-MM-JJ.");
+      return;
+    }
+
+    const { error } = await supabase
+      .from("projects")
+      .update({
+        status: "in_production",
+        production_start_date: productionStartDate,
+        active: true,
+      })
+      .eq("id", project.id);
+
+    if (error) {
+      setMessage(error.message);
+      return;
+    }
+
+    await emitEvent({
+      event_type: "PROJECT_PRODUCTION_STARTED",
+      entity_type: "project",
+      entity_id: project.id,
+      title: `Production lancée : ${project.name}`,
+      description: project.client_name || "",
+      payload: { production_start_date: productionStartDate, crm_contact_id: project.crm_contact_id || null },
+      user,
+    });
+
+    const refreshed = { ...project, status: "in_production", production_start_date: productionStartDate, active: true };
+    setSelectedProject(refreshed);
+    setMessage("Production lancée. Le projet apparaît maintenant dans CRM > En production.");
+    await loadData();
+  }
+
   async function createProduction(project) {
     const { error } = await supabase.from("production_planning").insert({
       project_id: project.id,
@@ -1504,17 +1612,6 @@ export default function Projets({ user, permissions }) {
   function progress(project) {
     const value = Number(project.progress_percent || 0);
     return Math.max(0, Math.min(100, value));
-  }
-
-  function formatDate(value) {
-    if (!value) return "-";
-    const date = new Date(`${String(value).slice(0, 10)}T00:00:00`);
-    if (Number.isNaN(date.getTime())) return String(value);
-    return date.toLocaleDateString("fr-FR", {
-      day: "2-digit",
-      month: "2-digit",
-      year: "numeric",
-    });
   }
 
   function formatDateTime(value) {
@@ -2220,6 +2317,16 @@ export default function Projets({ user, permissions }) {
                 <div className="progress-line">
                   <div style={{ width: `${progress(selectedProject)}%` }} />
                 </div>
+                {["validated", "planned"].includes(selectedProject.status) && (
+                  <div className="inline-actions" style={{ marginTop: 12 }}>
+                    <button className="btn primary" onClick={() => startProjectProduction(selectedProject)}>
+                      Lancer la production
+                    </button>
+                  </div>
+                )}
+                {selectedProject.status === "in_production" && (
+                  <p style={{ marginTop: 12 }}><strong>Production lancée :</strong> {selectedProject.production_start_date || "date non définie"}</p>
+                )}
               </div>
             </div>
           )}

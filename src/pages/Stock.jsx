@@ -109,7 +109,7 @@ export default function Stock({ user }) {
     const current = Number(item.current_quantity || 0);
     const minimum = Number(item.minimum_quantity || 0);
 
-    return minimum > 0 && current <= minimum;
+    return minimum > 0 && current < minimum;
   }
 
   const filteredItems = useMemo(() => {

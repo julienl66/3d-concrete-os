@@ -1506,6 +1506,17 @@ export default function Projets({ user, permissions }) {
     return Math.max(0, Math.min(100, value));
   }
 
+  function formatDate(value) {
+    if (!value) return "-";
+    const date = new Date(`${String(value).slice(0, 10)}T00:00:00`);
+    if (Number.isNaN(date.getTime())) return String(value);
+    return date.toLocaleDateString("fr-FR", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+    });
+  }
+
   function formatDateTime(value) {
     if (!value) return "-";
     return new Date(value).toLocaleString("fr-FR", {

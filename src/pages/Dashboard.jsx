@@ -27,6 +27,7 @@ export default function Dashboard({ user }) {
   const [now, setNow] = useState(new Date());
   const [selectedRevenueYear, setSelectedRevenueYear] = useState(new Date().getFullYear());
   const [selectedRevenueMonth, setSelectedRevenueMonth] = useState(new Date().getMonth() + 1);
+  const [revenueDetailMode, setRevenueDetailMode] = useState(null);
 
   useEffect(() => {
     loadDashboard();
@@ -34,9 +35,20 @@ export default function Dashboard({ user }) {
     const timer = setInterval(loadDashboard, 30000);
     const clock = setInterval(() => setNow(new Date()), 1000);
 
+    // Synchronisation temps réel avec les changements de date / montant projet faits dans BI.
+    const projectsChannel = supabase
+      .channel("dashboard-projects-revenue-live")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "projects" },
+        () => loadDashboard()
+      )
+      .subscribe();
+
     return () => {
       clearInterval(timer);
       clearInterval(clock);
+      supabase.removeChannel(projectsChannel);
     };
   }, []);
 
@@ -144,6 +156,7 @@ export default function Dashboard({ user }) {
       .filter((project) => Number(project.sale_amount || 0) > 0)
       .map((project) => ({
         id: `project-${project.id}`,
+        project_id: project.id,
         label: `${project.project_code ? `${project.project_code} - ` : ""}${project.name}`,
         amount: Number(project.sale_amount || 0),
         entry_date: project.signed_date || project.created_at?.slice(0, 10) || null,
@@ -175,6 +188,24 @@ export default function Dashboard({ user }) {
       month: "2-digit",
       year: "numeric",
     });
+  }
+
+
+  async function updateProjectRevenueDate(projectId, nextDate) {
+    if (!projectId) return;
+
+    const { error } = await supabase
+      .from("projects")
+      .update({ signed_date: nextDate || null })
+      .eq("id", projectId);
+
+    if (error) {
+      setMessage(error.message);
+      return;
+    }
+
+    setMessage("Date de CA mise à jour. Business Intelligence est synchronisé automatiquement.");
+    await loadDashboard();
   }
 
   function isLate(dateValue) {
@@ -662,6 +693,26 @@ export default function Dashboard({ user }) {
 
   const maxMonthlyRevenue = Math.max(1, ...revenueByMonth.map((row) => row.total));
 
+  const revenueDetailEntries = (() => {
+    if (revenueDetailMode === "monthly") return filteredMonthRevenueEntries;
+    if (revenueDetailMode === "project_annual") {
+      return filteredYearRevenueEntries.filter((entry) => entry.source === "project");
+    }
+    if (revenueDetailMode === "manual_annual") {
+      return filteredYearRevenueEntries.filter((entry) => entry.source !== "project");
+    }
+    return filteredYearRevenueEntries;
+  })();
+
+  const revenueDetailTitle =
+    revenueDetailMode === "monthly"
+      ? `Détail du CA — ${new Date(Number(selectedRevenueYear), Number(selectedRevenueMonth) - 1, 1).toLocaleDateString("fr-FR", { month: "long", year: "numeric" })}`
+      : revenueDetailMode === "project_annual"
+        ? `Détail du CA projets — ${selectedRevenueYear}`
+        : revenueDetailMode === "manual_annual"
+          ? `Détail du CA manuel — ${selectedRevenueYear}`
+          : `Détail du CA annuel — ${selectedRevenueYear}`;
+
   // Atelier en direct : uniquement les salariés dont une pointeuse tourne réellement.
   // Un dernier événement PAUSE ou DEPART ne doit pas apparaître comme un suivi actif.
   const employeesNow = latestEmployeeEvents().filter((event) =>
@@ -1062,26 +1113,79 @@ export default function Dashboard({ user }) {
         </div>
 
         <div className="stats-grid">
-          <div className="stat-card accent">
+          <button type="button" className="stat-card accent" style={{ textAlign: "left", cursor: "pointer" }} onClick={() => setRevenueDetailMode("annual")}>
             <span>CA annuel {selectedRevenueYear}</span>
             <strong>{formatMoney(annualRevenue)}</strong>
-          </div>
+            <small>Cliquer pour voir le détail</small>
+          </button>
 
-          <div className="stat-card">
+          <button type="button" className="stat-card" style={{ textAlign: "left", cursor: "pointer" }} onClick={() => setRevenueDetailMode("monthly")}>
             <span>CA mensuel</span>
             <strong>{formatMoney(monthlyRevenue)}</strong>
-          </div>
+            <small>Cliquer pour voir le détail</small>
+          </button>
 
-          <div className="stat-card">
+          <button type="button" className="stat-card" style={{ textAlign: "left", cursor: "pointer" }} onClick={() => setRevenueDetailMode("project_annual")}>
             <span>CA projets annuel</span>
             <strong>{formatMoney(annualProjectRevenue)}</strong>
-          </div>
+            <small>Cliquer pour voir les projets</small>
+          </button>
 
-          <div className="stat-card">
+          <button type="button" className="stat-card" style={{ textAlign: "left", cursor: "pointer" }} onClick={() => setRevenueDetailMode("manual_annual")}>
             <span>CA manuel annuel</span>
             <strong>{formatMoney(annualManualRevenue)}</strong>
-          </div>
+            <small>Cliquer pour voir le détail</small>
+          </button>
         </div>
+
+        {revenueDetailMode && (
+          <div className="card" style={{ marginTop: 14, marginBottom: 14 }}>
+            <div className="page-head">
+              <div>
+                <h4>{revenueDetailTitle}</h4>
+                <p>Les dates projet sont directement liées à la date de signature utilisée dans Business Intelligence.</p>
+              </div>
+              <button className="btn small" type="button" onClick={() => setRevenueDetailMode(null)}>Fermer</button>
+            </div>
+
+            {revenueDetailEntries.length === 0 ? (
+              <p>Aucune ligne de CA sur cette sélection.</p>
+            ) : (
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Source</th>
+                      <th>Projet / libellé</th>
+                      <th>Date de CA</th>
+                      <th>Montant</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {revenueDetailEntries.map((entry) => (
+                      <tr key={`detail-${entry.id}`}>
+                        <td>{entry.source === "project" ? "Projet" : "Manuel"}</td>
+                        <td><strong>{entry.label}</strong></td>
+                        <td>
+                          {entry.source === "project" ? (
+                            <input
+                              type="date"
+                              value={entry.entry_date || ""}
+                              onChange={(e) => updateProjectRevenueDate(entry.project_id, e.target.value)}
+                            />
+                          ) : (
+                            formatDate(entry.entry_date)
+                          )}
+                        </td>
+                        <td><strong>{formatMoney(entry.amount)}</strong></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
 
         <div className="revenue-month-chart">
           {revenueByMonth.map((row) => (

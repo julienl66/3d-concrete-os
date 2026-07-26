@@ -159,6 +159,21 @@ export default function BusinessIntelligence({ user, permissions }) {
     return Number(value || 0).toLocaleString("fr-FR", { maximumFractionDigits: 1 });
   }
 
+  async function updateProjectSignedDate(projectId, nextDate) {
+    const { error } = await supabase
+      .from("projects")
+      .update({ signed_date: nextDate || null })
+      .eq("id", projectId);
+
+    if (error) {
+      setMessage(error.message);
+      return;
+    }
+
+    setMessage("Date de signature / CA mise à jour. Le tableau de bord est synchronisé automatiquement.");
+    await loadData();
+  }
+
   function startDateForPeriod() {
     const date = new Date();
 
@@ -773,8 +788,18 @@ export default function BusinessIntelligence({ user, permissions }) {
                       <td>
                         <strong>{row.count}</strong>
                         {row.projects.length > 0 && (
-                          <div className="bi-project-names">
-                            {row.projects.map((project) => project.name).join(" · ")}
+                          <div className="bi-project-names" style={{ display: "grid", gap: 6, marginTop: 6 }}>
+                            {row.projects.map((project) => (
+                              <div key={project.id} style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                                <span>{project.project_code ? `${project.project_code} · ` : ""}{project.name}</span>
+                                <input
+                                  type="date"
+                                  value={project.signed_date || ""}
+                                  onChange={(e) => updateProjectSignedDate(project.id, e.target.value)}
+                                  title="Modifier la date de CA / signature"
+                                />
+                              </div>
+                            ))}
                           </div>
                         )}
                       </td>

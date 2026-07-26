@@ -323,6 +323,39 @@ export default function Dashboard({ user }) {
     localStorage.removeItem("acknowledged_auto_notifications");
   }
 
+  async function clearAllNotifications() {
+    const ok = window.confirm(
+      "Supprimer toutes les alertes affichées ? Les alertes toujours actives réapparaîtront au prochain Actualiser."
+    );
+    if (!ok) return;
+
+    const { error } = await supabase
+      .from("erp_notifications")
+      .delete()
+      .not("id", "is", null);
+
+    if (error) {
+      setMessage(error.message);
+      return;
+    }
+
+    const automaticIds = liveAutomaticNotifications.map((notification) => notification.id);
+    setAcknowledgedAutoNotifications(automaticIds);
+    localStorage.setItem(
+      "acknowledged_auto_notifications",
+      JSON.stringify(automaticIds)
+    );
+    setNotifications([]);
+    setMessage("Toutes les alertes ont été supprimées. Clique sur Actualiser pour recharger uniquement les alertes actuellement actives.");
+  }
+
+  async function refreshCurrentNotifications() {
+    setAcknowledgedAutoNotifications([]);
+    localStorage.removeItem("acknowledged_auto_notifications");
+    await loadDashboard();
+    setMessage("Alertes actuelles rechargées.");
+  }
+
   async function generateAutomaticNotifications() {
     const lowStockItems = stockItems.filter((item) => {
       const current = Number(item.current_quantity || 0);
@@ -791,7 +824,10 @@ export default function Dashboard({ user }) {
           <button className="btn small" onClick={generateAutomaticNotifications}>
             Générer alertes
           </button>
-          <button className="btn secondary" onClick={loadDashboard}>
+          <button className="btn small danger-soft" onClick={clearAllNotifications}>
+            Supprimer toutes les alertes
+          </button>
+          <button className="btn secondary" onClick={refreshCurrentNotifications}>
             Actualiser
           </button>
         </div>

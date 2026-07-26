@@ -296,7 +296,7 @@ export default function Projets({ user, permissions }) {
     if (!templateId) return;
 
     const steps = workflowSteps
-      .filter((step) => step.template_id === templateId)
+      .filter((step) => step.template_id === templateId && !step.is_closure)
       .sort((a, b) => Number(a.step_order || 0) - Number(b.step_order || 0));
 
     if (steps.length === 0) return;
@@ -416,6 +416,10 @@ export default function Projets({ user, permissions }) {
       selectedWorkflow?.id || null,
       request.requested_delivery_date || new Date().toISOString().slice(0, 10)
     );
+
+    if (selectedWorkflow?.id) {
+      await applyWorkflowToProject(project, selectedWorkflow.id, { replaceExisting: true });
+    }
 
     const { error: updateError } = await supabase
       .from("project_requests")
@@ -563,6 +567,171 @@ export default function Projets({ user, permissions }) {
     return projectAnnexCosts(project).reduce((sum, entry) => sum + Number(entry.amount || 0), 0);
   }
 
+  function workflowTemplateName(project) {
+    const template = workflowTemplates.find((item) => item.id === project?.workflow_template_id);
+    return template?.name || "-";
+  }
+
+  async function applyWorkflowToProject(project, templateId, { replaceExisting = false } = {}) {
+    if (!templateId) return true;
+
+    const template = workflowTemplates.find((item) => item.id === templateId);
+    const templateSteps = workflowSteps
+      .filter((step) => step.template_id === templateId && step.active !== false)
+      .sort((a, b) => Number(a.step_order || 0) - Number(b.step_order || 0));
+
+    if (!template || templateSteps.length === 0) {
+      setMessage("Le workflow sélectionné ne contient aucune étape.");
+      return false;
+    }
+
+    const { data: existingSteps, error: existingError } = await supabase
+      .from("project_steps")
+      .select("*")
+      .eq("project_id", project.id)
+      .order("step_order");
+
+    if (existingError) {
+      setMessage(existingError.message);
+      return false;
+    }
+
+    if ((existingSteps || []).length > 0 && !replaceExisting) {
+      const ok = window.confirm(
+        `Le projet possède déjà ${(existingSteps || []).length} étape(s). Remplacer ces étapes par le workflow « ${template.name} » ?`
+      );
+      if (!ok) return false;
+    }
+
+    if ((existingSteps || []).length > 0) {
+      const { error: deleteError } = await supabase
+        .from("project_steps")
+        .delete()
+        .eq("project_id", project.id);
+      if (deleteError) {
+        setMessage(deleteError.message);
+        return false;
+      }
+    }
+
+    const regularSteps = templateSteps.filter((step) => !step.is_closure);
+    const closureStep = templateSteps.find((step) => step.is_closure);
+    const normalized = [
+      ...regularSteps,
+      closureStep || { name: "Clôture du projet", is_closure: true },
+    ];
+
+    const rows = normalized.map((step, index) => ({
+      project_id: project.id,
+      title: step.is_closure ? "Clôture du projet" : step.name,
+      step_order: index + 1,
+      done: false,
+      is_closure: !!step.is_closure,
+    }));
+
+    const { error: insertError } = await supabase.from("project_steps").insert(rows);
+    if (insertError) {
+      setMessage(insertError.message);
+      return false;
+    }
+
+    const { error: projectError } = await supabase
+      .from("projects")
+      .update({ workflow_template_id: templateId, workflow_status: "active" })
+      .eq("id", project.id);
+
+    if (projectError) {
+      setMessage(projectError.message);
+      return false;
+    }
+
+    await recalculateProjectProgress(project.id);
+    if (selectedProject?.id === project.id) await loadProjectDetails({ ...project, workflow_template_id: templateId });
+    return true;
+  }
+
+  async function changeProjectWorkflow(project) {
+    if (!hasRight("can_edit")) {
+      setMessage("Action non autorisée.");
+      return;
+    }
+
+    if (workflowTemplates.length === 0) {
+      setMessage("Aucun workflow disponible. Crée-en un dans l'onglet Workflows.");
+      return;
+    }
+
+    const list = workflowTemplates.map((template, index) => `${index + 1}. ${template.name}`).join("\n");
+    const currentIndex = workflowTemplates.findIndex((template) => template.id === project.workflow_template_id);
+    const choice = window.prompt(`Choisis le workflow du projet :\n${list}`, String(currentIndex >= 0 ? currentIndex + 1 : 1));
+    if (choice === null) return;
+
+    const template = workflowTemplates[Number(choice) - 1];
+    if (!template) return setMessage("Workflow invalide.");
+
+    const applied = await applyWorkflowToProject(project, template.id);
+    if (applied) {
+      setMessage(`Workflow « ${template.name} » appliqué au projet.`);
+      await loadData();
+    }
+  }
+
+  async function completeProjectFromWorkflow(project, closureStep) {
+    const { data: allSteps, error: stepsError } = await supabase
+      .from("project_steps")
+      .select("*")
+      .eq("project_id", project.id)
+      .order("step_order");
+
+    if (stepsError) return setMessage(stepsError.message);
+
+    const unfinished = (allSteps || []).filter((step) => !step.is_closure && !step.done);
+    if (unfinished.length > 0) {
+      setMessage(`Impossible de clôturer : ${unfinished.length} étape(s) ne sont pas encore terminée(s).`);
+      return;
+    }
+
+    const ok = window.confirm(
+      `Clôturer définitivement le projet « ${project.name} » ? Il passera dans Projets archivés/réalisés et dans CRM > Production terminée.`
+    );
+    if (!ok) return;
+
+    const now = new Date().toISOString();
+    const today = now.slice(0, 10);
+
+    const { error: stepError } = await supabase
+      .from("project_steps")
+      .update({ done: true, done_at: now })
+      .eq("id", closureStep.id);
+    if (stepError) return setMessage(stepError.message);
+
+    const { error: projectError } = await supabase
+      .from("projects")
+      .update({
+        active: false,
+        status: "completed",
+        progress_percent: 100,
+        workflow_status: "completed",
+        completed_at: now,
+        production_end_date: project.production_end_date || today,
+      })
+      .eq("id", project.id);
+
+    if (projectError) return setMessage(projectError.message);
+
+    // Les opportunités secondaires liées au projet restent gagnées et conservent leur historique.
+    await supabase
+      .from("crm_contact_opportunities")
+      .update({ status: "won", updated_at: now })
+      .eq("project_id", project.id)
+      .neq("status", "lost");
+
+    setSelectedProject(null);
+    setView("list");
+    setMessage("Projet clôturé : il est désormais réalisé/archivé et apparaît en Production terminée dans le CRM.");
+    await loadData();
+  }
+
   async function changeProjectType(project) {
     if (!hasRight("can_edit")) {
       setMessage("Action non autorisée.");
@@ -570,25 +739,52 @@ export default function Projets({ user, permissions }) {
     }
 
     if (projectTypes.length === 0) {
-      setMessage("Aucun type de projet disponible.");
+      setMessage("Aucune catégorie de projet disponible.");
       return;
     }
 
     const list = projectTypes
-      .map((type, index) => `${index + 1}. ${type.name}`)
-      .join("\\n");
+      .map((type, index) => {
+        const defaultWorkflow = workflowTemplates.find((template) => template.id === type.default_workflow_template_id);
+        return `${index + 1}. ${type.name}${defaultWorkflow ? ` → ${defaultWorkflow.name}` : ""}`;
+      })
+      .join("\n");
 
-    const choice = window.prompt(`Choisis le type de projet :\\n${list}`, "1");
+    const choice = window.prompt(`Choisis la catégorie du projet :\n${list}`, "1");
     if (choice === null) return;
 
     const selectedType = projectTypes[Number(choice) - 1];
-
     if (!selectedType) {
-      setMessage("Type invalide.");
+      setMessage("Catégorie invalide.");
       return;
     }
 
-    await updateProject(project, { project_type_id: selectedType.id });
+    const patch = { project_type_id: selectedType.id };
+    if (selectedType.default_workflow_template_id) {
+      patch.workflow_template_id = selectedType.default_workflow_template_id;
+      patch.workflow_status = "active";
+    }
+
+    const { error } = await supabase.from("projects").update(patch).eq("id", project.id);
+    if (error) return setMessage(error.message);
+
+    if (selectedType.default_workflow_template_id) {
+      const applied = await applyWorkflowToProject(
+        { ...project, ...patch },
+        selectedType.default_workflow_template_id
+      );
+      if (!applied) {
+        setMessage(`Catégorie « ${selectedType.name} » enregistrée. Le workflow existant a été conservé.`);
+        await loadData();
+        return;
+      }
+      const workflow = workflowTemplates.find((item) => item.id === selectedType.default_workflow_template_id);
+      setMessage(`Catégorie « ${selectedType.name} » enregistrée et workflow « ${workflow?.name || "associé"} » appliqué.`);
+    } else {
+      setMessage(`Catégorie « ${selectedType.name} » enregistrée. Aucun workflow par défaut n'est associé à cette catégorie.`);
+    }
+
+    await loadData();
   }
 
   async function addAnnexCost(project) {
@@ -866,9 +1062,10 @@ export default function Projets({ user, permissions }) {
 
     const rows = defaultSteps.map((title, index) => ({
       project_id: project.id,
-      title,
+      title: title === "Clôture projet" ? "Clôture du projet" : title,
       step_order: index + 1,
       done: false,
+      is_closure: title === "Clôture projet",
     }));
 
     const { error } = await supabase.from("project_steps").insert(rows);
@@ -888,17 +1085,23 @@ export default function Projets({ user, permissions }) {
     const title = window.prompt("Nom de la nouvelle étape ?");
     if (!title) return;
 
-    const nextOrder =
-      projectSteps.length > 0
-        ? Math.max(...projectSteps.map((step) => Number(step.step_order || 0))) + 1
-        : 1;
+    const closure = projectSteps.find((step) => step.is_closure);
+    const regularSteps = projectSteps.filter((step) => !step.is_closure);
+    const nextOrder = regularSteps.length > 0
+      ? Math.max(...regularSteps.map((step) => Number(step.step_order || 0))) + 1
+      : 1;
 
     const { error } = await supabase.from("project_steps").insert({
       project_id: project.id,
       title,
       step_order: nextOrder,
       done: false,
+      is_closure: false,
     });
+
+    if (!error && closure) {
+      await supabase.from("project_steps").update({ step_order: nextOrder + 1 }).eq("id", closure.id);
+    }
 
     if (error) {
       setMessage(error.message);
@@ -912,6 +1115,15 @@ export default function Projets({ user, permissions }) {
   }
 
   async function toggleProjectStep(step) {
+    if (step.is_closure) {
+      if (step.done) {
+        setMessage("Un projet clôturé ne se rouvre pas depuis cette étape. Restaure-le depuis les projets archivés si nécessaire.");
+        return;
+      }
+      await completeProjectFromWorkflow(selectedProject, step);
+      return;
+    }
+
     const done = !step.done;
 
     const { error } = await supabase
@@ -934,6 +1146,10 @@ export default function Projets({ user, permissions }) {
   }
 
   async function renameProjectStep(step) {
+    if (step.is_closure) {
+      setMessage("L'étape de clôture est verrouillée.");
+      return;
+    }
     const title = window.prompt("Nouveau nom de l'étape ?", step.title);
     if (title === null) return;
 
@@ -952,6 +1168,10 @@ export default function Projets({ user, permissions }) {
   }
 
   async function deleteProjectStep(step) {
+    if (step.is_closure) {
+      setMessage("Impossible de supprimer l'étape de clôture.");
+      return;
+    }
     const ok = window.confirm(`Supprimer l'étape "${step.title}" ?`);
     if (!ok) return;
 
@@ -1226,6 +1446,7 @@ export default function Projets({ user, permissions }) {
       ready: "Prêt",
       installed: "Posé",
       archived: "Archivé",
+      completed: "Réalisé",
       active: "Actif",
     };
 
@@ -1617,6 +1838,40 @@ export default function Projets({ user, permissions }) {
               ))}
             </div>
           </div>
+
+          <div className="card">
+            <div className="page-head">
+              <div>
+                <h3>Projets réalisés / archivés</h3>
+                <p>Les projets clôturés par leur workflow arrivent automatiquement ici.</p>
+              </div>
+              <strong>{archivedProjects.length}</strong>
+            </div>
+
+            {archivedProjects.length === 0 ? (
+              <p>Aucun projet réalisé ou archivé.</p>
+            ) : (
+              <div className="project-cards-grid">
+                {archivedProjects.map((project) => (
+                  <article className="project-tile" key={project.id}>
+                    <div className="project-tile-head">
+                      <span>{project.project_code || "Sans code"}</span>
+                      <span className="status-pill validated">{statusLabel(project.status)}</span>
+                    </div>
+                    <h3>{project.name}</h3>
+                    <p>{project.client_name || "-"}</p>
+                    <div className="project-tile-meta">
+                      <span>{project.status === "completed" ? "100 %" : `${progress(project)} %`}</span>
+                      <span>{project.completed_at ? `Clôturé ${formatDateTime(project.completed_at)}` : "Archivé"}</span>
+                    </div>
+                    <div className="inline-actions">
+                      <button className="btn small" onClick={() => openProject(project)}>Consulter</button>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            )}
+          </div>
         </>
       )}
 
@@ -1649,7 +1904,10 @@ export default function Projets({ user, permissions }) {
 
               <div className="inline-actions">
                 <button className="btn small" onClick={() => changeProjectType(selectedProject)}>
-                  Type projet
+                  Catégorie projet
+                </button>
+                <button className="btn small" onClick={() => changeProjectWorkflow(selectedProject)}>
+                  Workflow projet
                 </button>
                 <button className="btn small" onClick={() => promptNumber(selectedProject, "sale_amount", "Montant vendu ?")}>
                   Vente
@@ -1668,8 +1926,13 @@ export default function Projets({ user, permissions }) {
 
             <div className="project-finance-kpis">
               <div>
-                <span>Type</span>
+                <span>Catégorie</span>
                 <strong>{projectTypeName(selectedProject)}</strong>
+              </div>
+
+              <div>
+                <span>Workflow</span>
+                <strong>{workflowTemplateName(selectedProject)}</strong>
               </div>
 
               <div>
@@ -1910,13 +2173,13 @@ export default function Projets({ user, permissions }) {
             <div className="card">
               <div className="page-head">
                 <div>
-                  <h3>Workflow de fabrication</h3>
-                  <p>Ajoute, modifie, coche ou supprime les étapes du projet.</p>
+                  <h3>Workflow du projet</h3>
+                  <p>Les étapes proviennent du workflow associé. La clôture est toujours la dernière étape et termine automatiquement le projet.</p>
                 </div>
 
                 <div className="inline-actions">
-                  <button className="btn small" onClick={() => createDefaultSteps(selectedProject)}>
-                    Générer étapes type
+                  <button className="btn small" onClick={() => changeProjectWorkflow(selectedProject)}>
+                    Choisir / remplacer workflow
                   </button>
                   <button className="btn primary" onClick={() => addProjectStep(selectedProject)}>
                     Ajouter étape
@@ -1925,7 +2188,7 @@ export default function Projets({ user, permissions }) {
               </div>
 
               {projectSteps.length === 0 ? (
-                <p>Aucune étape. Clique sur “Générer étapes type” ou ajoute une étape manuellement.</p>
+                <p>Aucune étape. Choisis un workflow pour générer automatiquement le parcours du projet.</p>
               ) : (
                 <div className="steps-list">
                   {projectSteps.map((step) => (

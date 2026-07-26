@@ -283,7 +283,7 @@ export default function CRM({ user, permissions }) {
 
   function opportunityLifecycle(contact) {
     const project = linkedProject(contact);
-    if (project?.status === "ready") return "production_completed";
+    if (["ready", "completed"].includes(project?.status)) return "production_completed";
     if (project?.status === "in_production") return "in_production";
     if (project && ["validated", "planned"].includes(project.status)) return "validated";
     if (isWonStage(contact.stage_id)) return "validated";
@@ -2973,7 +2973,7 @@ export default function CRM({ user, permissions }) {
                             ) : key === "in_production" ? (
                               <button className="btn small primary" onClick={(e) => { e.stopPropagation(); completeOpportunityProduction(contact); }}>Terminer la production</button>
                             ) : key === "production_completed" ? (
-                              <span className="crm-production-state completed">Projet prêt</span>
+                              <span className="crm-production-state completed">Production terminée</span>
                             ) : key === "lost" ? (
                               <button className="btn small danger-soft" onClick={(e) => { e.stopPropagation(); deleteOpportunityDirectly(contact); }}>Retirer du pipeline</button>
                             ) : (

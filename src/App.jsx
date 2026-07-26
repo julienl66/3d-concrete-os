@@ -7,6 +7,7 @@ import BusinessIntelligence from "./pages/BusinessIntelligence.jsx";
 import Pointage from "./pages/Pointage.jsx";
 import Employes from "./pages/Employes.jsx";
 import Projets from "./pages/Projets.jsx";
+import Workflows from "./pages/Workflows.jsx";
 import Planning from "./pages/Planning.jsx";
 import Stock from "./pages/Stock.jsx";
 import Administration from "./pages/Administration.jsx";
@@ -26,6 +27,7 @@ const pages = {
   pointage: Pointage,
   employes: Employes,
   projets: Projets,
+  workflows: Workflows,
   planning: Planning,
   stock: Stock,
   administration: Administration,

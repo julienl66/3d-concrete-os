@@ -8,6 +8,7 @@ const items = [
   { id: "pointage", label: "Pointage", icon: "⏱️" },
   { id: "employes", label: "Employés", icon: "👷" },
   { id: "projets", label: "Projets", icon: "📁" },
+  { id: "workflows", label: "Workflows", icon: "🔀" },
   { id: "chiffrage", label: "Chiffrage", icon: "🧮" },
   { id: "crm", label: "CRM", icon: "🤝" },
   { id: "messagerie", label: "Messagerie", icon: "✉️" },

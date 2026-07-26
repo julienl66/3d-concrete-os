@@ -427,10 +427,28 @@ export default function Administration({ user }) {
       return;
     }
 
+    const { error: closureError } = await supabase
+      .from("project_workflow_steps")
+      .insert({
+        template_id: data.id,
+        name: "Clôture du projet",
+        step_order: 1,
+        default_duration_days: 0,
+        task_type_id: null,
+        active: true,
+        is_closure: true,
+      });
+
+    if (closureError) {
+      setMessage(closureError.message);
+      return;
+    }
+
     setWorkflowTemplateName("");
     setSelectedTemplateId(data.id);
-    setMessage("Modèle de workflow ajouté.");
+    setMessage("Modèle de workflow ajouté avec sa clôture automatique.");
     await loadWorkflowTemplates();
+    await loadWorkflowSteps();
   }
 
   async function renameWorkflowTemplate(template) {
@@ -487,15 +505,21 @@ export default function Administration({ user }) {
       return;
     }
 
+    const templateSteps = workflowSteps.filter((step) => step.template_id === selectedTemplateId && step.active !== false);
+    const closure = templateSteps.find((step) => step.is_closure);
+    const regularSteps = templateSteps.filter((step) => !step.is_closure);
+    const nextOrder = regularSteps.reduce((max, step) => Math.max(max, Number(step.step_order || 0)), 0) + 1;
+
     const { error } = await supabase
       .from("project_workflow_steps")
       .insert({
         template_id: selectedTemplateId,
         name: workflowStepForm.name,
-        step_order: Number(workflowStepForm.step_order || 1),
+        step_order: nextOrder,
         default_duration_days: Number(workflowStepForm.default_duration_days || 1),
         task_type_id: workflowStepForm.task_type_id || null,
         active: true,
+        is_closure: false,
       });
 
     if (error) {
@@ -503,18 +527,29 @@ export default function Administration({ user }) {
       return;
     }
 
+    if (closure) {
+      await supabase
+        .from("project_workflow_steps")
+        .update({ step_order: nextOrder + 1, name: "Clôture du projet" })
+        .eq("id", closure.id);
+    }
+
     setWorkflowStepForm({
       name: "",
-      step_order: Number(workflowStepForm.step_order || 1) + 1,
+      step_order: nextOrder + 1,
       default_duration_days: 1,
       task_type_id: "",
     });
 
-    setMessage("Étape ajoutée.");
+    setMessage("Étape ajoutée avant la clôture.");
     await loadWorkflowSteps();
   }
 
   async function editWorkflowStep(step) {
+    if (step.is_closure) {
+      setMessage("La clôture est une étape système et doit toujours rester en dernière position.");
+      return;
+    }
     const name = window.prompt("Nom de l'étape ?", step.name);
     if (name === null) return;
 
@@ -543,6 +578,10 @@ export default function Administration({ user }) {
   }
 
   async function deleteWorkflowStep(step) {
+    if (step.is_closure) {
+      setMessage("Impossible de supprimer l'étape « Clôture du projet ».");
+      return;
+    }
     const ok = window.confirm(`Supprimer l'étape "${step.name}" ?`);
     if (!ok) return;
 
@@ -1122,12 +1161,18 @@ export default function Administration({ user }) {
                       </div>
 
                       <div className="inline-actions">
-                        <button className="btn small" onClick={() => editWorkflowStep(step)}>
-                          Modifier
-                        </button>
-                        <button className="btn small danger-soft" onClick={() => deleteWorkflowStep(step)}>
-                          Supprimer
-                        </button>
+                        {step.is_closure ? (
+                          <span className="status-pill">Étape système</span>
+                        ) : (
+                          <>
+                            <button className="btn small" onClick={() => editWorkflowStep(step)}>
+                              Modifier
+                            </button>
+                            <button className="btn small danger-soft" onClick={() => deleteWorkflowStep(step)}>
+                              Supprimer
+                            </button>
+                          </>
+                        )}
                       </div>
                     </div>
                   ))}

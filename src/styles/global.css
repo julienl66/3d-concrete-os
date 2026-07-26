@@ -9738,3 +9738,12 @@ textarea:focus {
     width: 100%;
   }
 }
+
+/* Workflow projet : étape système de clôture */
+.workflow-closure-step {
+  border-style: dashed;
+  opacity: 0.95;
+}
+.workflow-closure-step .workflow-step-order {
+  font-weight: 800;
+}

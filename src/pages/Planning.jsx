@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { supabase } from "../services/supabase.js";
 import { emitEvent } from "../services/events.js";
+import { maintenanceOccurrences } from "../services/maintenance.js";
 
 const PRIORITIES = [
   { value: "low", label: "Basse" },
@@ -37,6 +38,8 @@ export default function Planning({ user }) {
   const [viewMode, setViewMode] = useState("calendar");
   const [selectedEmployeeFilter, setSelectedEmployeeFilter] = useState("all");
   const [editingTask, setEditingTask] = useState(null);
+  const [maintenanceActivities, setMaintenanceActivities] = useState([]);
+  const [maintenanceCompletions, setMaintenanceCompletions] = useState([]);
 
   const [form, setForm] = useState({
     task_date: "",
@@ -61,7 +64,7 @@ export default function Planning({ user }) {
     const monthStart = new Date(calendarDate.getFullYear(), calendarDate.getMonth(), 1);
     const monthEnd = new Date(calendarDate.getFullYear(), calendarDate.getMonth() + 1, 0);
 
-    const [projectsResponse, employeesResponse, taskTypesResponse, resourcesResponse, tasksResponse, taskResourcesResponse, taskAssignmentsResponse] = await Promise.all([
+    const [projectsResponse, employeesResponse, taskTypesResponse, resourcesResponse, tasksResponse, taskResourcesResponse, taskAssignmentsResponse, maintenanceResponse, maintenanceCompletionsResponse] = await Promise.all([
       supabase.from("projects").select("*").eq("active", true).order("name"),
       supabase.from("employees").select("*").eq("active", true).order("name"),
       supabase.from("production_task_types").select("*").eq("active", true).order("name"),
@@ -82,7 +85,16 @@ export default function Planning({ user }) {
         .select("*, resources(name, resource_type, status)"),
       supabase
         .from("production_task_assignments")
-        .select("*, employees(name)")
+        .select("*, employees(name)"),
+      supabase
+        .from("maintenance_activities")
+        .select("*")
+        .eq("active", true),
+      supabase
+        .from("maintenance_completions")
+        .select("*")
+        .gte("occurrence_date", dateToInputValue(monthStart))
+        .lte("occurrence_date", dateToInputValue(monthEnd))
     ]);
 
     const error =
@@ -92,7 +104,9 @@ export default function Planning({ user }) {
       resourcesResponse.error ||
       tasksResponse.error ||
       taskResourcesResponse.error ||
-      taskAssignmentsResponse.error;
+      taskAssignmentsResponse.error ||
+      maintenanceResponse.error ||
+      maintenanceCompletionsResponse.error;
 
     if (error) {
       setMessage(error.message);
@@ -106,6 +120,8 @@ export default function Planning({ user }) {
     setDayTasks(tasksResponse.data || []);
     setTaskResources(taskResourcesResponse.data || []);
     setTaskAssignments(taskAssignmentsResponse.data || []);
+    setMaintenanceActivities(maintenanceResponse.data || []);
+    setMaintenanceCompletions(maintenanceCompletionsResponse.data || []);
   }
 
   function dateToInputValue(date) {
@@ -182,6 +198,41 @@ export default function Planning({ user }) {
     });
   }
 
+
+  function maintenanceForDay(day) {
+    if (!day) return [];
+    const value = dateToInputValue(day);
+    return maintenanceActivities
+      .filter((activity) => {
+        if (selectedEmployeeFilter === "all") return true;
+        if (selectedEmployeeFilter === "unassigned") return !activity.assigned_employee_id;
+        return String(activity.assigned_employee_id || "") === String(selectedEmployeeFilter);
+      })
+      .flatMap((activity) =>
+        maintenanceOccurrences(activity, value, value).map((occurrenceDate) => ({
+          ...activity,
+          occurrenceDate,
+          completed: maintenanceCompletions.some(
+            (row) => String(row.activity_id) === String(activity.id) && row.occurrence_date === occurrenceDate
+          ),
+        }))
+      );
+  }
+
+  async function completeMaintenanceOccurrence(item) {
+    if (item.completed) return;
+    const { error } = await supabase.from("maintenance_completions").insert({
+      activity_id: item.id,
+      occurrence_date: item.occurrenceDate,
+      completed_at: new Date().toISOString(),
+    });
+    if (error) {
+      setMessage(error.message);
+      return;
+    }
+    setMessage("Maintenance marquée comme réalisée.");
+    await loadData();
+  }
 
   function tasksForDay(day) {
     if (!day) return [];
@@ -846,6 +897,7 @@ export default function Planning({ user }) {
 
             {monthDays(calendarDate).map((day, index) => {
               const tasks = tasksForDay(day);
+              const maintenanceItems = maintenanceForDay(day);
               const today = day && sameDay(day, new Date());
 
               return (
@@ -871,9 +923,34 @@ export default function Planning({ user }) {
                       </div>
 
                       <div className="production-calendar-content">
-                        {tasks.length === 0 && (
+                        {tasks.length === 0 && maintenanceItems.length === 0 && (
                           <small className="calendar-empty-label">Rien de prévu</small>
                         )}
+
+                        {maintenanceItems.map((item) => (
+                          <article
+                            className={`production-card maintenance-planning-card ${item.completed ? "task-status-done" : "task-status-planned"}`}
+                            key={`maintenance-${item.id}-${item.occurrenceDate}`}
+                          >
+                            <div>
+                              <strong>🛠️ {item.title}</strong>
+                              <span>{item.equipment || "Maintenance"}</span>
+                              <small>
+                                Maintenance · {employees.find((employee) => String(employee.id) === String(item.assigned_employee_id))?.name || "Non attribuée"}
+                              </small>
+                              <small>
+                                {item.start_time?.slice(0, 5) || "-"} - {item.end_time?.slice(0, 5) || "-"} · {item.priority || "normal"}
+                              </small>
+                            </div>
+                            <div className="production-card-actions">
+                              {item.completed ? (
+                                <span className="maintenance-done-label">Réalisée</span>
+                              ) : (
+                                <button onClick={() => completeMaintenanceOccurrence(item)}>Terminé</button>
+                              )}
+                            </div>
+                          </article>
+                        ))}
 
                         {tasks.map((task) => (
                           <article

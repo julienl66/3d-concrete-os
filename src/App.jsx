@@ -9,6 +9,7 @@ import Employes from "./pages/Employes.jsx";
 import Projets from "./pages/Projets.jsx";
 import Workflows from "./pages/Workflows.jsx";
 import Planning from "./pages/Planning.jsx";
+import Maintenance from "./pages/Maintenance.jsx";
 import Stock from "./pages/Stock.jsx";
 import Administration from "./pages/Administration.jsx";
 import Messagerie from "./pages/Messagerie.jsx";
@@ -29,6 +30,7 @@ const pages = {
   projets: Projets,
   workflows: Workflows,
   planning: Planning,
+  maintenance: Maintenance,
   stock: Stock,
   administration: Administration,
   messagerie: Messagerie,

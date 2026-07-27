@@ -13,6 +13,7 @@ const items = [
   { id: "crm", label: "CRM", icon: "🤝" },
   { id: "messagerie", label: "Messagerie", icon: "✉️" },
   { id: "planning", label: "Planning", icon: "📅" },
+  { id: "maintenance", label: "Maintenance", icon: "🛠️" },
   { id: "stock", label: "Stock", icon: "📦" },
   { id: "couts", label: "Coûts & marges", icon: "💰" },
   { id: "administration", label: "Administration", icon: "⚙️" },

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { supabase } from "../services/supabase.js";
+import { maintenanceOccurrences } from "../services/maintenance.js";
 
 export default function Dashboard({ user }) {
   const [notifications, setNotifications] = useState([]);
@@ -28,6 +29,8 @@ export default function Dashboard({ user }) {
   const [selectedRevenueYear, setSelectedRevenueYear] = useState(new Date().getFullYear());
   const [selectedRevenueMonth, setSelectedRevenueMonth] = useState(new Date().getMonth() + 1);
   const [revenueDetailMode, setRevenueDetailMode] = useState(null);
+  const [maintenanceActivities, setMaintenanceActivities] = useState([]);
+  const [maintenanceCompletions, setMaintenanceCompletions] = useState([]);
 
   useEffect(() => {
     loadDashboard();
@@ -45,10 +48,17 @@ export default function Dashboard({ user }) {
       )
       .subscribe();
 
+    const maintenanceChannel = supabase
+      .channel("dashboard-maintenance-live")
+      .on("postgres_changes", { event: "*", schema: "public", table: "maintenance_activities" }, () => loadDashboard())
+      .on("postgres_changes", { event: "*", schema: "public", table: "maintenance_completions" }, () => loadDashboard())
+      .subscribe();
+
     return () => {
       clearInterval(timer);
       clearInterval(clock);
       supabase.removeChannel(projectsChannel);
+      supabase.removeChannel(maintenanceChannel);
     };
   }, []);
 
@@ -67,6 +77,8 @@ export default function Dashboard({ user }) {
       weeklyEmployeesResponse,
       crmContactsResponse,
       crmInteractionsResponse,
+      maintenanceResponse,
+      maintenanceCompletionsResponse,
     ] = await Promise.all([
       supabase
         .from("erp_notifications")
@@ -123,6 +135,15 @@ export default function Dashboard({ user }) {
         .select("*")
         .eq("done", false)
         .order("next_action_date", { ascending: true }),
+      supabase
+        .from("maintenance_activities")
+        .select("*")
+        .eq("active", true),
+      supabase
+        .from("maintenance_completions")
+        .select("*")
+        .gte("occurrence_date", new Date(Date.now() - 90 * 86400000).toISOString().slice(0, 10))
+        .lte("occurrence_date", new Date().toISOString().slice(0, 10)),
     ]);
 
     const error =
@@ -138,7 +159,9 @@ export default function Dashboard({ user }) {
       weeklyTopicsResponse.error ||
       weeklyEmployeesResponse.error ||
       crmContactsResponse.error ||
-      crmInteractionsResponse.error;
+      crmInteractionsResponse.error ||
+      maintenanceResponse.error ||
+      maintenanceCompletionsResponse.error;
 
     if (error) {
       setMessage(error.message);
@@ -167,6 +190,8 @@ export default function Dashboard({ user }) {
     setWeeklyTasks((weeklyTasksResponse.data || []).filter((task) => task.active !== false && task.status !== "done"));
     setWeeklyTopics((weeklyTopicsResponse.data || []).filter((topic) => topic.active !== false && topic.status !== "done"));
     setWeeklyEmployees(weeklyEmployeesResponse.data || []);
+    setMaintenanceActivities(maintenanceResponse.data || []);
+    setMaintenanceCompletions(maintenanceCompletionsResponse.data || []);
   }
 
   function formatDateTime(value) {
@@ -499,6 +524,19 @@ export default function Dashboard({ user }) {
     (item) => isLate(item.planned_date) && item.status !== "done" && item.status !== "cancelled"
   );
 
+  const todayYmd = new Date().toISOString().slice(0, 10);
+  const maintenanceWindowStart = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
+  const dueMaintenance = maintenanceActivities.flatMap((activity) => {
+    const pendingDates = maintenanceOccurrences(activity, maintenanceWindowStart, todayYmd).filter(
+      (occurrenceDate) => !maintenanceCompletions.some(
+        (row) => String(row.activity_id) === String(activity.id) && row.occurrence_date === occurrenceDate
+      )
+    );
+    if (pendingDates.length === 0) return [];
+    const oldest = pendingDates[0];
+    return [{ activity, oldest, count: pendingDates.length, overdue: oldest < todayYmd }];
+  });
+
   const liveAutomaticNotifications = [
     ...lowStockItems.map((item) => ({
       id: `auto-stock-${item.id}`,
@@ -527,6 +565,15 @@ export default function Dashboard({ user }) {
       is_read: false,
       automatic: true,
     })),
+    ...dueMaintenance.map(({ activity, oldest, count, overdue }) => ({
+      id: `auto-maintenance-${activity.id}-${oldest}`,
+      level: overdue ? "critical" : "warning",
+      title: overdue ? "Maintenance en retard" : "Maintenance à réaliser aujourd'hui",
+      message: `${activity.title}${activity.equipment ? ` · ${activity.equipment}` : ""} · ${oldest}${count > 1 ? ` · ${count} échéances non réalisées` : ""}`,
+      created_at: new Date().toISOString(),
+      is_read: false,
+      automatic: true,
+    })),
   ];
 
   const liveAutomaticNotificationsWithState = liveAutomaticNotifications.map((notification) => ({
@@ -545,10 +592,15 @@ export default function Dashboard({ user }) {
       notification.id.startsWith("auto-pose-")
   );
 
+  const maintenanceNotifications = liveAutomaticNotificationsWithState.filter((notification) =>
+    notification.id.startsWith("auto-maintenance-")
+  );
+
   const savedNotifications = notifications.filter((notification) => !notification.is_read);
 
   const stockNewCount = stockNotifications.filter((notification) => !notification.is_acknowledged).length;
   const lateNewCount = lateNotifications.filter((notification) => !notification.is_acknowledged).length;
+  const maintenanceNewCount = maintenanceNotifications.filter((notification) => !notification.is_acknowledged).length;
 
   const notificationGroups = [
     {
@@ -572,6 +624,17 @@ export default function Dashboard({ user }) {
         ? `${lateNotifications.length} retard(s) · ${lateNewCount} nouveau(x)`
         : "Aucun retard détecté",
       items: lateNotifications,
+    },
+    {
+      id: "maintenance",
+      icon: "🛠️",
+      title: "Maintenance",
+      level: maintenanceNotifications.length ? "danger" : "success",
+      count: maintenanceNotifications.length,
+      description: maintenanceNotifications.length
+        ? `${maintenanceNotifications.length} échéance(s) · ${maintenanceNewCount} nouvelle(s)`
+        : "Aucune maintenance à échéance",
+      items: maintenanceNotifications,
     },
     {
       id: "manual",

@@ -9747,3 +9747,90 @@ textarea:focus {
 .workflow-closure-step .workflow-step-order {
   font-weight: 800;
 }
+
+/* Maintenance */
+.maintenance-form-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+  margin-bottom: 18px;
+}
+
+.maintenance-form-grid label {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #475569;
+}
+
+.maintenance-form-grid input,
+.maintenance-form-grid select,
+.maintenance-form-grid textarea {
+  width: 100%;
+  border: 1px solid #dbe3ea;
+  border-radius: 10px;
+  padding: 10px 11px;
+  background: #fff;
+  color: #0f172a;
+  font: inherit;
+}
+
+.maintenance-description {
+  grid-column: 1 / -1;
+}
+
+.maintenance-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.maintenance-list-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 16px;
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  background: #fff;
+}
+
+.maintenance-list-row > div:first-child {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.maintenance-list-row span,
+.maintenance-list-row small {
+  color: #64748b;
+}
+
+.maintenance-planning-card {
+  border-left: 4px solid #d97706 !important;
+  background: #fffaf0;
+}
+
+.maintenance-done-label {
+  display: inline-flex;
+  padding: 5px 8px;
+  border-radius: 999px;
+  background: #dcfce7;
+  color: #166534;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+@media (max-width: 1100px) {
+  .maintenance-form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 700px) {
+  .maintenance-form-grid { grid-template-columns: 1fr; }
+  .maintenance-description { grid-column: auto; }
+  .maintenance-list-row { align-items: flex-start; flex-direction: column; }
+}

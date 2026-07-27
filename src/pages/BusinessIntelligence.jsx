@@ -33,6 +33,7 @@ export default function BusinessIntelligence({ user, permissions }) {
   const [crmContacts, setCrmContacts] = useState([]);
   const [crmStages, setCrmStages] = useState([]);
   const [crmInteractions, setCrmInteractions] = useState([]);
+  const [contactOpportunities, setContactOpportunities] = useState([]);
   const [quotes, setQuotes] = useState([]);
   const [stockItems, setStockItems] = useState([]);
   const [punchEvents, setPunchEvents] = useState([]);
@@ -97,6 +98,7 @@ export default function BusinessIntelligence({ user, permissions }) {
       crmContactsResponse,
       crmStagesResponse,
       crmInteractionsResponse,
+      contactOpportunitiesResponse,
       quotesResponse,
       stockResponse,
       punchResponse,
@@ -109,6 +111,7 @@ export default function BusinessIntelligence({ user, permissions }) {
       supabase.from("crm_contacts").select("*").order("created_at", { ascending: false }),
       supabase.from("crm_pipeline_stages").select("*").eq("active", true).order("stage_order"),
       supabase.from("crm_interactions").select("*").order("created_at", { ascending: false }),
+      supabase.from("crm_contact_opportunities").select("*").order("created_at", { ascending: false }),
       supabase.from("quote_estimations").select("*").order("created_at", { ascending: false }),
       supabase.from("stock_items").select("*").eq("active", true),
       supabase.from("punch_events").select("*").order("event_time", { ascending: true }),
@@ -123,6 +126,7 @@ export default function BusinessIntelligence({ user, permissions }) {
       crmContactsResponse.error ||
       crmStagesResponse.error ||
       crmInteractionsResponse.error ||
+      contactOpportunitiesResponse.error ||
       quotesResponse.error ||
       stockResponse.error ||
       punchResponse.error ||
@@ -138,6 +142,7 @@ export default function BusinessIntelligence({ user, permissions }) {
     setCrmContacts(crmContactsResponse.data || []);
     setCrmStages(crmStagesResponse.data || []);
     setCrmInteractions(crmInteractionsResponse.data || []);
+    setContactOpportunities(contactOpportunitiesResponse.data || []);
     setQuotes(quotesResponse.data || []);
     setStockItems(stockResponse.data || []);
     setPunchEvents(punchResponse.data || []);
@@ -304,7 +309,7 @@ export default function BusinessIntelligence({ user, permissions }) {
   function valueForSource(sourceKey) {
     const values = {
       projects_revenue: totalRevenue,
-      crm_pipeline: crmPipeline + quotePipeline,
+      crm_pipeline: pipelineRaw,
       active_projects: activeProjects.length,
       quotes_count: quotes.length,
       crm_contacts: crmContacts.length,
@@ -475,11 +480,90 @@ export default function BusinessIntelligence({ user, permissions }) {
   const maxFunnelCount = Math.max(1, ...crmFunnel.map((row) => row.count));
 
 
-  const openCrmContacts = crmContacts.filter((contact) => {
-    const stage = crmStages.find((item) => item.id === contact.stage_id);
-    const stageName = String(stage?.name || "").toLowerCase();
+  // Le pipe BI doit être strictement identique aux trois pipes du CRM :
+  // Chaud + Tiède + Froid. Le vivier, les projets validés/production, les perdus
+  // et les chiffrages hors CRM ne doivent pas entrer dans le pipe brut.
+  const firstCommercialStage = [...crmStages]
+    .filter((stage) => !String(stage.name || "").toLowerCase().includes("perdu"))
+    .sort((a, b) => Number(a.stage_order || 0) - Number(b.stage_order || 0))[0] || null;
 
-    return !stageName.includes("gagn") && !stageName.includes("perdu");
+  function stageName(contact) {
+    return String(crmStages.find((stage) => stage.id === contact.stage_id)?.name || "").toLowerCase();
+  }
+
+  function contactInteractions(contactId) {
+    return crmInteractions.filter((item) => item.crm_contact_id === contactId || item.contact_id === contactId);
+  }
+
+  function hasExplicitPipelineEntry(contact) {
+    if (!contact) return false;
+    const name = stageName(contact);
+    if (name.includes("gagn") || name.includes("perdu")) return false;
+
+    // Dès qu'un projet est validé ou parti en production, il sort du pipe commercial.
+    const linkedProjects = projects.filter((project) => project.crm_contact_id === contact.id);
+    if (linkedProjects.some((project) => ["validated", "planned", "in_production", "ready", "completed"].includes(project.status))) return false;
+
+    const hasActiveStoredOpportunity = contactOpportunities.some((item) =>
+      item.contact_id === contact.id && String(item.status || "").toLowerCase() === "active"
+    );
+    if (hasActiveStoredOpportunity) return true;
+
+    if (contact.status !== "active" || !contact.stage_id) return false;
+    const currentStage = crmStages.find((stage) => stage.id === contact.stage_id);
+    if (currentStage && firstCommercialStage && Number(currentStage.stage_order || 0) > Number(firstCommercialStage.stage_order || 0)) return true;
+
+    const probability = Number(contact.probability_percent || contact.probability || 0);
+    if (probability >= 40) return true;
+
+    return contactInteractions(contact.id).some((item) => {
+      const type = String(item.interaction_type || "").toLowerCase();
+      const subject = String(item.subject || "").toLowerCase();
+      const notes = String(item.notes || "").toLowerCase();
+      if (subject.includes("import csv") || notes.includes("import csv")) return false;
+      const explicitMarker =
+        subject.includes("prospect ciblé") ||
+        subject.includes("opportunité créée") ||
+        subject.includes("qualifiée par probabilité") ||
+        subject.includes("ajouté manuellement depuis le vivier");
+      return explicitMarker || ["appel", "email", "rdv", "devis"].includes(type);
+    });
+  }
+
+  function opportunityScore(contact) {
+    const probability = Number(contact.probability_percent || contact.probability || 0);
+    const amount = Number(contact.estimated_amount || 0);
+    const items = contactInteractions(contact.id);
+    const latest = items
+      .map((item) => new Date(item.interaction_date || item.created_at || 0).getTime())
+      .filter(Number.isFinite)
+      .sort((a, b) => b - a)[0];
+    const inactivity = latest ? Math.floor((Date.now() - latest) / 86400000) : 999;
+    const hasMeeting = items.some((item) => item.interaction_type === "rdv");
+    const hasQuote = items.some((item) => item.interaction_type === "devis");
+    const hasOverdueAction = items.some((item) => !item.done && item.next_action_date && item.next_action_date < new Date().toISOString().slice(0, 10));
+    let score = probability;
+    if (amount >= 50000) score += 8;
+    if (amount >= 100000) score += 5;
+    if (hasMeeting) score += 8;
+    if (hasQuote) score += 10;
+    if (inactivity <= 7) score += 7;
+    if (inactivity >= 21) score -= 18;
+    if (inactivity >= 45) score -= 15;
+    if (hasOverdueAction) score -= 5;
+    return Math.max(0, Math.min(100, Math.round(score)));
+  }
+
+  function opportunityTemperature(contact) {
+    const score = opportunityScore(contact);
+    if (score >= 70) return "hot";
+    if (score >= 40) return "warm";
+    return "cold";
+  }
+
+  const openCrmContacts = crmContacts.filter((contact) => {
+    if (!hasExplicitPipelineEntry(contact)) return false;
+    return ["hot", "warm", "cold"].includes(opportunityTemperature(contact));
   });
 
   const pipelineRaw = openCrmContacts.reduce(
@@ -889,8 +973,8 @@ export default function BusinessIntelligence({ user, permissions }) {
           <div className="bi-pipeline-summary">
             <div className="card investor-hero">
               <span>PIPE BRUT</span>
-              <strong>{formatMoney(pipelineRaw + quotePipeline)}</strong>
-              <p>CRM ouvert + chiffrages non convertis.</p>
+              <strong>{formatMoney(pipelineRaw)}</strong>
+              <p>Pipe chaud + pipe tiède + pipe froid uniquement.</p>
             </div>
 
             <div className="card investor-hero">

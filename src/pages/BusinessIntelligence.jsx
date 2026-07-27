@@ -33,7 +33,6 @@ export default function BusinessIntelligence({ user, permissions }) {
   const [crmContacts, setCrmContacts] = useState([]);
   const [crmStages, setCrmStages] = useState([]);
   const [crmInteractions, setCrmInteractions] = useState([]);
-  const [contactOpportunities, setContactOpportunities] = useState([]);
   const [quotes, setQuotes] = useState([]);
   const [stockItems, setStockItems] = useState([]);
   const [punchEvents, setPunchEvents] = useState([]);
@@ -98,7 +97,6 @@ export default function BusinessIntelligence({ user, permissions }) {
       crmContactsResponse,
       crmStagesResponse,
       crmInteractionsResponse,
-      contactOpportunitiesResponse,
       quotesResponse,
       stockResponse,
       punchResponse,
@@ -111,7 +109,6 @@ export default function BusinessIntelligence({ user, permissions }) {
       supabase.from("crm_contacts").select("*").order("created_at", { ascending: false }),
       supabase.from("crm_pipeline_stages").select("*").eq("active", true).order("stage_order"),
       supabase.from("crm_interactions").select("*").order("created_at", { ascending: false }),
-      supabase.from("crm_contact_opportunities").select("*").order("created_at", { ascending: false }),
       supabase.from("quote_estimations").select("*").order("created_at", { ascending: false }),
       supabase.from("stock_items").select("*").eq("active", true),
       supabase.from("punch_events").select("*").order("event_time", { ascending: true }),
@@ -126,7 +123,6 @@ export default function BusinessIntelligence({ user, permissions }) {
       crmContactsResponse.error ||
       crmStagesResponse.error ||
       crmInteractionsResponse.error ||
-      contactOpportunitiesResponse.error ||
       quotesResponse.error ||
       stockResponse.error ||
       punchResponse.error ||
@@ -142,7 +138,6 @@ export default function BusinessIntelligence({ user, permissions }) {
     setCrmContacts(crmContactsResponse.data || []);
     setCrmStages(crmStagesResponse.data || []);
     setCrmInteractions(crmInteractionsResponse.data || []);
-    setContactOpportunities(contactOpportunitiesResponse.data || []);
     setQuotes(quotesResponse.data || []);
     setStockItems(stockResponse.data || []);
     setPunchEvents(punchResponse.data || []);
@@ -278,18 +273,135 @@ export default function BusinessIntelligence({ user, permissions }) {
 
   const totalRevenue = signedRevenue + manualRevenue;
 
-  const crmPipeline = crmContacts.reduce((sum, contact) => {
-    const stage = crmStages.find((item) => item.id === contact.stage_id);
-    const name = String(stage?.name || "").toLowerCase();
+  // Le pipe BI doit être une retranscription stricte du CRM : uniquement les
+  // opportunités réellement présentes en Chaud / Tiède / Froid. Le vivier,
+  // les dossiers perdus et les projets déjà validés / en production / terminés
+  // sont exclus. Cette logique ne dépend volontairement pas de la table
+  // crm_contact_opportunities afin de rester compatible avec le schéma actuel.
+  function biStageName(stageId) {
+    return crmStages.find((stage) => stage.id === stageId)?.name || "";
+  }
 
-    if (name.includes("gagn") || name.includes("perdu")) return sum;
+  function biIsWonStage(stageId) {
+    const name = biStageName(stageId).toLowerCase();
+    return name.includes("gagn") || name.includes("sign");
+  }
 
-    return sum + Number(contact.estimated_amount || 0);
-  }, 0);
+  function biIsLostStage(stageId) {
+    return biStageName(stageId).toLowerCase().includes("perdu");
+  }
 
-  const quotePipeline = quotes
-    .filter((quote) => quote.status !== "converted")
-    .reduce((sum, quote) => sum + Number(quote.sale_amount || quote.total_cost || 0), 0);
+  function biLinkedProject(contact) {
+    if (!contact) return null;
+    return projects.find((project) => project.id === contact.project_id)
+      || projects.find((project) => project.crm_contact_id === contact.id)
+      || null;
+  }
+
+  function biOpportunityLifecycle(contact) {
+    const project = biLinkedProject(contact);
+    if (["ready", "completed"].includes(project?.status)) return "production_completed";
+    if (project?.status === "in_production") return "in_production";
+    if (project && ["validated", "planned"].includes(project.status)) return "validated";
+    if (biIsWonStage(contact.stage_id)) return "validated";
+    return "opportunity";
+  }
+
+  function biContactInteractions(contactId) {
+    return crmInteractions.filter((item) => item.contact_id === contactId);
+  }
+
+  function biLastActivityDate(contactId) {
+    return biContactInteractions(contactId)
+      .map((item) => item.created_at || item.interaction_date || item.next_action_date)
+      .filter(Boolean)
+      .sort()
+      .at(-1);
+  }
+
+  function biDaysSinceLastActivity(contactId) {
+    const date = biLastActivityDate(contactId);
+    if (!date) return 999;
+    return Math.floor((Date.now() - new Date(date).getTime()) / 86400000);
+  }
+
+  function biOpportunityScore(contact) {
+    const probability = Number(contact.probability_percent || contact.probability || 0);
+    const amount = Number(contact.estimated_amount || 0);
+    const inactivity = biDaysSinceLastActivity(contact.id);
+    const items = biContactInteractions(contact.id);
+    const hasMeeting = items.some((item) => item.interaction_type === "rdv");
+    const hasQuote = items.some((item) => item.interaction_type === "devis");
+    const hasRecentActivity = inactivity <= 7;
+    const today = new Date().toISOString().slice(0, 10);
+    const hasOverdueAction = items.some((item) => !item.done && item.next_action_date && item.next_action_date < today);
+
+    let score = probability;
+    if (amount >= 50000) score += 8;
+    if (amount >= 100000) score += 5;
+    if (hasMeeting) score += 8;
+    if (hasQuote) score += 10;
+    if (hasRecentActivity) score += 7;
+    if (inactivity >= 21) score -= 18;
+    if (inactivity >= 45) score -= 15;
+    if (hasOverdueAction) score -= 5;
+    return Math.max(0, Math.min(100, Math.round(score)));
+  }
+
+  function biOpportunityTemperature(contact) {
+    const score = biOpportunityScore(contact);
+    if (score >= 70) return "hot";
+    if (score >= 40) return "warm";
+    return "cold";
+  }
+
+  function biFirstCommercialStage() {
+    return [...crmStages]
+      .filter((stage) => !String(stage.name || "").toLowerCase().includes("perdu"))
+      .sort((a, b) => Number(a.stage_order || 0) - Number(b.stage_order || 0))[0] || null;
+  }
+
+  function biHasExplicitPipelineEntry(contact) {
+    if (!contact) return false;
+    if (biLinkedProject(contact) || biIsWonStage(contact.stage_id) || biIsLostStage(contact.stage_id)) return true;
+    if (contact.status !== "active" || !contact.stage_id) return false;
+
+    const firstStage = biFirstCommercialStage();
+    const currentStage = crmStages.find((stage) => stage.id === contact.stage_id);
+    if (currentStage && firstStage && Number(currentStage.stage_order || 0) > Number(firstStage.stage_order || 0)) return true;
+
+    const probability = Number(contact.probability_percent || contact.probability || 0);
+    if (probability >= 40) return true;
+
+    return biContactInteractions(contact.id).some((item) => {
+      const type = String(item.interaction_type || "").toLowerCase();
+      const subject = String(item.subject || "").toLowerCase();
+      const notes = String(item.notes || "").toLowerCase();
+      const imported = subject.includes("import csv") || notes.includes("import csv");
+      if (imported) return false;
+
+      const explicitMarker =
+        subject.includes("prospect ciblé")
+        || subject.includes("opportunité créée")
+        || subject.includes("qualifiée par probabilité")
+        || subject.includes("ajouté manuellement depuis le vivier");
+      const realCommercialAction = ["appel", "email", "rdv", "devis"].includes(type);
+      return explicitMarker || realCommercialAction;
+    });
+  }
+
+  const biOpenPipelineContacts = crmContacts.filter((contact) =>
+    biHasExplicitPipelineEntry(contact)
+    && biOpportunityLifecycle(contact) === "opportunity"
+    && !biIsLostStage(contact.stage_id)
+  );
+
+  const crmPipeline = biOpenPipelineContacts.reduce(
+    (sum, contact) => sum + Number(contact.estimated_amount || 0),
+    0
+  );
+
+  const quotePipeline = 0;
 
   const stockValue = stockItems.reduce(
     (sum, item) => sum + Number(item.current_quantity || 0) * normalizedStockCost(item),
@@ -309,7 +421,7 @@ export default function BusinessIntelligence({ user, permissions }) {
   function valueForSource(sourceKey) {
     const values = {
       projects_revenue: totalRevenue,
-      crm_pipeline: pipelineRaw,
+      crm_pipeline: crmPipeline,
       active_projects: activeProjects.length,
       quotes_count: quotes.length,
       crm_contacts: crmContacts.length,
@@ -368,7 +480,7 @@ export default function BusinessIntelligence({ user, permissions }) {
   }).length;
 
   const commercialScore = Math.max(0, Math.min(100,
-    (crmPipeline + quotePipeline) / pipelineGoal * 35 +
+    crmPipeline / pipelineGoal * 35 +
     rdvCount / rdvGoal * 20 +
     devisCount / quoteGoal * 20 +
     signedContacts * 5 -
@@ -480,96 +592,10 @@ export default function BusinessIntelligence({ user, permissions }) {
   const maxFunnelCount = Math.max(1, ...crmFunnel.map((row) => row.count));
 
 
-  // Le pipe BI doit être strictement identique aux trois pipes du CRM :
-  // Chaud + Tiède + Froid. Le vivier, les projets validés/production, les perdus
-  // et les chiffrages hors CRM ne doivent pas entrer dans le pipe brut.
-  const firstCommercialStage = [...crmStages]
-    .filter((stage) => !String(stage.name || "").toLowerCase().includes("perdu"))
-    .sort((a, b) => Number(a.stage_order || 0) - Number(b.stage_order || 0))[0] || null;
+  // Même source que les trois colonnes Chaud / Tiède / Froid du CRM.
+  const openCrmContacts = biOpenPipelineContacts;
 
-  function stageName(contact) {
-    return String(crmStages.find((stage) => stage.id === contact.stage_id)?.name || "").toLowerCase();
-  }
-
-  function contactInteractions(contactId) {
-    return crmInteractions.filter((item) => item.crm_contact_id === contactId || item.contact_id === contactId);
-  }
-
-  function hasExplicitPipelineEntry(contact) {
-    if (!contact) return false;
-    const name = stageName(contact);
-    if (name.includes("gagn") || name.includes("perdu")) return false;
-
-    // Dès qu'un projet est validé ou parti en production, il sort du pipe commercial.
-    const linkedProjects = projects.filter((project) => project.crm_contact_id === contact.id);
-    if (linkedProjects.some((project) => ["validated", "planned", "in_production", "ready", "completed"].includes(project.status))) return false;
-
-    const hasActiveStoredOpportunity = contactOpportunities.some((item) =>
-      item.contact_id === contact.id && String(item.status || "").toLowerCase() === "active"
-    );
-    if (hasActiveStoredOpportunity) return true;
-
-    if (contact.status !== "active" || !contact.stage_id) return false;
-    const currentStage = crmStages.find((stage) => stage.id === contact.stage_id);
-    if (currentStage && firstCommercialStage && Number(currentStage.stage_order || 0) > Number(firstCommercialStage.stage_order || 0)) return true;
-
-    const probability = Number(contact.probability_percent || contact.probability || 0);
-    if (probability >= 40) return true;
-
-    return contactInteractions(contact.id).some((item) => {
-      const type = String(item.interaction_type || "").toLowerCase();
-      const subject = String(item.subject || "").toLowerCase();
-      const notes = String(item.notes || "").toLowerCase();
-      if (subject.includes("import csv") || notes.includes("import csv")) return false;
-      const explicitMarker =
-        subject.includes("prospect ciblé") ||
-        subject.includes("opportunité créée") ||
-        subject.includes("qualifiée par probabilité") ||
-        subject.includes("ajouté manuellement depuis le vivier");
-      return explicitMarker || ["appel", "email", "rdv", "devis"].includes(type);
-    });
-  }
-
-  function opportunityScore(contact) {
-    const probability = Number(contact.probability_percent || contact.probability || 0);
-    const amount = Number(contact.estimated_amount || 0);
-    const items = contactInteractions(contact.id);
-    const latest = items
-      .map((item) => new Date(item.interaction_date || item.created_at || 0).getTime())
-      .filter(Number.isFinite)
-      .sort((a, b) => b - a)[0];
-    const inactivity = latest ? Math.floor((Date.now() - latest) / 86400000) : 999;
-    const hasMeeting = items.some((item) => item.interaction_type === "rdv");
-    const hasQuote = items.some((item) => item.interaction_type === "devis");
-    const hasOverdueAction = items.some((item) => !item.done && item.next_action_date && item.next_action_date < new Date().toISOString().slice(0, 10));
-    let score = probability;
-    if (amount >= 50000) score += 8;
-    if (amount >= 100000) score += 5;
-    if (hasMeeting) score += 8;
-    if (hasQuote) score += 10;
-    if (inactivity <= 7) score += 7;
-    if (inactivity >= 21) score -= 18;
-    if (inactivity >= 45) score -= 15;
-    if (hasOverdueAction) score -= 5;
-    return Math.max(0, Math.min(100, Math.round(score)));
-  }
-
-  function opportunityTemperature(contact) {
-    const score = opportunityScore(contact);
-    if (score >= 70) return "hot";
-    if (score >= 40) return "warm";
-    return "cold";
-  }
-
-  const openCrmContacts = crmContacts.filter((contact) => {
-    if (!hasExplicitPipelineEntry(contact)) return false;
-    return ["hot", "warm", "cold"].includes(opportunityTemperature(contact));
-  });
-
-  const pipelineRaw = openCrmContacts.reduce(
-    (sum, contact) => sum + Number(contact.estimated_amount || 0),
-    0
-  );
+  const pipelineRaw = crmPipeline;
 
   const pipelineWeighted = openCrmContacts.reduce((sum, contact) => {
     const probability = Number(contact.probability_percent || contact.probability || 0);
@@ -974,7 +1000,7 @@ export default function BusinessIntelligence({ user, permissions }) {
             <div className="card investor-hero">
               <span>PIPE BRUT</span>
               <strong>{formatMoney(pipelineRaw)}</strong>
-              <p>Pipe chaud + pipe tiède + pipe froid uniquement.</p>
+              <p>CRM ouvert + chiffrages non convertis.</p>
             </div>
 
             <div className="card investor-hero">

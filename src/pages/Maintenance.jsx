@@ -25,11 +25,19 @@ const PRIORITIES = [
 
 export default function Maintenance() {
   const [activities, setActivities] = useState([]);
+  const [allActivities, setAllActivities] = useState([]);
   const [completions, setCompletions] = useState([]);
   const [employees, setEmployees] = useState([]);
   const [form, setForm] = useState(EMPTY_FORM);
   const [editingId, setEditingId] = useState(null);
   const [message, setMessage] = useState("");
+  const [performedForm, setPerformedForm] = useState({
+    title: "",
+    equipment: "",
+    occurrence_date: new Date().toISOString().slice(0, 10),
+    assigned_employee_id: "",
+    notes: "",
+  });
 
   useEffect(() => {
     loadData();
@@ -37,7 +45,7 @@ export default function Maintenance() {
 
   async function loadData() {
     const [activitiesRes, completionsRes, employeesRes] = await Promise.all([
-      supabase.from("maintenance_activities").select("*").eq("active", true).order("scheduled_date"),
+      supabase.from("maintenance_activities").select("*").order("scheduled_date"),
       supabase.from("maintenance_completions").select("*").order("occurrence_date", { ascending: false }),
       supabase.from("employees").select("id, name").eq("active", true).order("name"),
     ]);
@@ -47,7 +55,9 @@ export default function Maintenance() {
       setMessage(error.message);
       return;
     }
-    setActivities(activitiesRes.data || []);
+    const all = activitiesRes.data || [];
+    setAllActivities(all);
+    setActivities(all.filter((row) => row.active !== false));
     setCompletions(completionsRes.data || []);
     setEmployees(employeesRes.data || []);
   }
@@ -56,9 +66,94 @@ export default function Maintenance() {
     return employees.find((employee) => String(employee.id) === String(id))?.name || "Non attribuée";
   }
 
+  function activityById(id) {
+    return allActivities.find((activity) => String(activity.id) === String(id));
+  }
+
   function resetForm() {
     setForm(EMPTY_FORM);
     setEditingId(null);
+  }
+
+  async function recordPerformedMaintenance(event) {
+    event.preventDefault();
+    const title = performedForm.title.trim();
+    const occurrenceDate = performedForm.occurrence_date;
+    if (!title || !occurrenceDate) {
+      setMessage("Le titre et la date de réalisation sont obligatoires.");
+      return;
+    }
+
+    // Une maintenance réalisée sans planification est enregistrée comme activité ponctuelle
+    // immédiatement archivée, afin de conserver un historique complet sans polluer le planning.
+    const { data: activity, error: activityError } = await supabase
+      .from("maintenance_activities")
+      .insert({
+        title,
+        equipment: performedForm.equipment.trim() || null,
+        description: null,
+        scheduled_date: occurrenceDate,
+        start_time: null,
+        end_time: null,
+        assigned_employee_id: performedForm.assigned_employee_id || null,
+        priority: "normal",
+        recurrence_type: "none",
+        recurrence_interval: 1,
+        recurrence_end_date: null,
+        active: false,
+        updated_at: new Date().toISOString(),
+      })
+      .select("id")
+      .single();
+
+    if (activityError) {
+      setMessage(activityError.message);
+      return;
+    }
+
+    const { error: completionError } = await supabase.from("maintenance_completions").insert({
+      activity_id: activity.id,
+      occurrence_date: occurrenceDate,
+      completed_at: new Date().toISOString(),
+      notes: performedForm.notes.trim() || null,
+    });
+
+    if (completionError) {
+      setMessage(completionError.message);
+      return;
+    }
+
+    setPerformedForm({
+      title: "",
+      equipment: "",
+      occurrence_date: new Date().toISOString().slice(0, 10),
+      assigned_employee_id: "",
+      notes: "",
+    });
+    setMessage("Maintenance effectuée enregistrée dans l’historique.");
+    await loadData();
+  }
+
+  async function completeNow(activity) {
+    const today = new Date().toISOString().slice(0, 10);
+    const existing = completions.find(
+      (row) => String(row.activity_id) === String(activity.id) && row.occurrence_date === today
+    );
+    if (existing) {
+      setMessage("Cette maintenance est déjà enregistrée comme effectuée aujourd’hui.");
+      return;
+    }
+    const notes = window.prompt("Compte-rendu / note de maintenance (facultatif) :", "");
+    if (notes === null) return;
+    const { error } = await supabase.from("maintenance_completions").insert({
+      activity_id: activity.id,
+      occurrence_date: today,
+      completed_at: new Date().toISOString(),
+      notes: notes || null,
+    });
+    if (error) return setMessage(error.message);
+    setMessage("Maintenance enregistrée comme effectuée aujourd’hui.");
+    await loadData();
   }
 
   async function saveActivity(event) {
@@ -176,6 +271,23 @@ export default function Maintenance() {
 
       {message && <div className="alert info">{message}</div>}
 
+      <form className="card maintenance-form" onSubmit={recordPerformedMaintenance}>
+        <div className="page-head">
+          <div>
+            <h3>Enregistrer une maintenance effectuée</h3>
+            <p>Pour les interventions réalisées à la demande, après alerte machine ou selon l’état du système. Aucune planification ni récurrence n’est nécessaire.</p>
+          </div>
+        </div>
+        <div className="maintenance-form-grid">
+          <label>Titre<input value={performedForm.title} onChange={(e) => setPerformedForm({ ...performedForm, title: e.target.value })} placeholder="Ex. Nettoyage buse après alerte pression" /></label>
+          <label>Équipement / zone<input value={performedForm.equipment} onChange={(e) => setPerformedForm({ ...performedForm, equipment: e.target.value })} placeholder="Robot, pompe, compresseur..." /></label>
+          <label>Date réalisée<input type="date" value={performedForm.occurrence_date} onChange={(e) => setPerformedForm({ ...performedForm, occurrence_date: e.target.value })} /></label>
+          <label>Réalisée par<select value={performedForm.assigned_employee_id} onChange={(e) => setPerformedForm({ ...performedForm, assigned_employee_id: e.target.value })}><option value="">Non renseigné</option>{employees.map((employee) => <option key={employee.id} value={employee.id}>{employee.name}</option>)}</select></label>
+          <label className="maintenance-description">Compte-rendu / remarque<textarea rows="3" value={performedForm.notes} onChange={(e) => setPerformedForm({ ...performedForm, notes: e.target.value })} placeholder="Cause, contrôle effectué, pièce remplacée, observation..." /></label>
+        </div>
+        <button className="btn primary" type="submit">✓ Enregistrer comme effectuée</button>
+      </form>
+
       <form className="card maintenance-form" onSubmit={saveActivity}>
         <div className="page-head">
           <div>
@@ -214,6 +326,7 @@ export default function Maintenance() {
                   <small>{activity.scheduled_date} · {activity.start_time?.slice(0, 5) || "-"} · {recurrenceLabel(activity)} · {employeeName(activity.assigned_employee_id)}</small>
                 </div>
                 <div className="inline-actions">
+                  <button className="btn small" onClick={() => completeNow(activity)}>✓ Effectuée aujourd’hui</button>
                   <button className="btn small" onClick={() => editActivity(activity)}>Modifier</button>
                   <button className="btn small danger-soft" onClick={() => archiveActivity(activity)}>Archiver</button>
                 </div>
@@ -233,6 +346,26 @@ export default function Maintenance() {
                 <button className="btn small" onClick={() => completeOccurrence(activity, date)}>Marquer réalisée</button>
               </article>
             ))}
+          </div>
+        )}
+      </div>
+
+      <div className="card">
+        <h3>Historique des maintenances effectuées</h3>
+        {completions.length === 0 ? <p>Aucune maintenance enregistrée comme effectuée.</p> : (
+          <div className="maintenance-list">
+            {completions.slice(0, 100).map((completion) => {
+              const activity = activityById(completion.activity_id);
+              return (
+                <article className="maintenance-list-row" key={completion.id}>
+                  <div>
+                    <strong>{completion.occurrence_date} · {activity?.title || "Maintenance"}</strong>
+                    <span>{activity?.equipment || "Maintenance générale"}</span>
+                    <small>{employeeName(activity?.assigned_employee_id)}{completion.notes ? ` · ${completion.notes}` : ""}</small>
+                  </div>
+                </article>
+              );
+            })}
           </div>
         )}
       </div>

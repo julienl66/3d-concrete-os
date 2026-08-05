@@ -54,6 +54,7 @@ export default function Planning({ user }) {
     notes: "",
     status: "planned",
     priority: "normal",
+    task_color: "",
   });
 
   useEffect(() => {
@@ -361,6 +362,7 @@ export default function Planning({ user }) {
       notes: "",
       status: "planned",
       priority: "normal",
+      task_color: "",
     });
     setModalOpen(true);
   }
@@ -380,6 +382,7 @@ export default function Planning({ user }) {
       notes: task.notes || "",
       status: task.status || "planned",
       priority: task.priority || "normal",
+      task_color: task.task_color || "",
     });
     setModalOpen(true);
   }
@@ -406,6 +409,7 @@ export default function Planning({ user }) {
       notes: form.notes || null,
       status: form.status || "planned",
       priority: form.priority || "normal",
+      task_color: form.task_color || null,
       created_by: user?.id || null,
     };
 
@@ -515,12 +519,42 @@ export default function Planning({ user }) {
     loadData();
   }
 
-  function taskColor(task) {
+  function taskTypeColor(task) {
     return task.production_task_types?.color || "#111827";
   }
 
   function projectColor(task) {
-    return task.projects?.project_color || "#111827";
+    return task.projects?.project_color || "#2563eb";
+  }
+
+  function effectiveTaskColor(task) {
+    return task.task_color || (task.projects ? projectColor(task) : taskTypeColor(task));
+  }
+
+  async function updateProjectColor(projectId, color) {
+    const { error } = await supabase
+      .from("projects")
+      .update({ project_color: color })
+      .eq("id", projectId);
+
+    if (error) {
+      setMessage(error.message);
+      return;
+    }
+
+    setProjects((current) =>
+      current.map((project) =>
+        project.id === projectId ? { ...project, project_color: color } : project
+      )
+    );
+    setDayTasks((current) =>
+      current.map((task) =>
+        task.project_id === projectId
+          ? { ...task, projects: { ...(task.projects || {}), project_color: color } }
+          : task
+      )
+    );
+    setMessage("Couleur du projet mise à jour.");
   }
 
   function projectLabel(task) {
@@ -609,7 +643,7 @@ export default function Planning({ user }) {
 
     return {
       gridColumn: `${startIndex + 2} / span ${duration}`,
-      borderTopColor: task.projects ? projectColor(task) : taskColor(task),
+      borderTopColor: effectiveTaskColor(task),
     };
   }
 
@@ -630,7 +664,7 @@ export default function Planning({ user }) {
     return {
       top: `${top}px`,
       height: `${height}px`,
-      borderLeftColor: task.projects ? projectColor(task) : taskColor(task),
+      borderLeftColor: effectiveTaskColor(task),
     };
   }
 
@@ -857,6 +891,42 @@ export default function Planning({ user }) {
         </div>
       </div>
 
+      <div className="card" style={{ marginBottom: 16 }}>
+        <div className="planning-board-title">
+          <div>
+            <h3>Couleurs des projets</h3>
+            <p>Les tâches héritent de la couleur du projet, sauf si une couleur spécifique est définie sur la tâche.</p>
+          </div>
+        </div>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
+          {projects.map((project) => (
+            <label
+              key={project.id}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                padding: "8px 10px",
+                border: "1px solid #e5e7eb",
+                borderRadius: 10,
+                background: "#fff",
+              }}
+            >
+              <input
+                type="color"
+                value={project.project_color || "#2563eb"}
+                onChange={(e) => updateProjectColor(project.id, e.target.value)}
+                title={`Couleur du projet ${project.name}`}
+              />
+              <span>
+                {project.project_code ? `${project.project_code} · ` : ""}
+                {project.name}
+              </span>
+            </label>
+          ))}
+        </div>
+      </div>
+
       <div className="planning-view-switch">
         <button className={viewMode === "calendar" ? "active" : ""} onClick={() => setViewMode("calendar")}>
           📅 Calendrier
@@ -955,7 +1025,7 @@ export default function Planning({ user }) {
                         {tasks.map((task) => (
                           <article
                             className={`production-card task-status-${task.status}`}
-                            style={{ borderLeftColor: task.projects ? projectColor(task) : taskColor(task) }}
+                            style={{ borderLeftColor: effectiveTaskColor(task) }}
                             key={task.id}
                             draggable
                             onDragStart={(e) => onTaskDragStart(e, task)}
@@ -1029,7 +1099,7 @@ export default function Planning({ user }) {
                       {tasks.map((task) => (
                         <article
                           className={`atelier-task-card task-status-${task.status}`}
-                          style={{ borderTopColor: task.projects ? projectColor(task) : taskColor(task) }}
+                          style={{ borderTopColor: effectiveTaskColor(task) }}
                           key={task.id}
                           draggable
                           onDragStart={(e) => onTaskDragStart(e, task)}
@@ -1071,7 +1141,7 @@ export default function Planning({ user }) {
                     {tasks.map((task) => (
                       <article
                         className={`atelier-task-card task-status-${task.status}`}
-                        style={{ borderTopColor: task.projects ? projectColor(task) : taskColor(task) }}
+                        style={{ borderTopColor: effectiveTaskColor(task) }}
                         key={task.id}
                       >
                         <strong>{task.title}</strong>
@@ -1360,6 +1430,34 @@ export default function Planning({ user }) {
                     </option>
                   ))}
                 </select>
+              </div>
+
+              <div>
+                <label>Couleur spécifique de la tâche</label>
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <input
+                    type="color"
+                    value={
+                      form.task_color
+                      || projects.find((project) => String(project.id) === String(form.project_id))?.project_color
+                      || "#2563eb"
+                    }
+                    onChange={(e) => setForm({ ...form, task_color: e.target.value })}
+                    title="Couleur spécifique de cette tâche"
+                  />
+                  <button
+                    type="button"
+                    className="btn small"
+                    onClick={() => setForm({ ...form, task_color: "" })}
+                  >
+                    Utiliser la couleur du projet
+                  </button>
+                </div>
+                <small>
+                  {form.task_color
+                    ? "Cette couleur remplace uniquement celle de cette tâche."
+                    : "Aucune couleur spécifique : la tâche reprend la couleur du projet."}
+                </small>
               </div>
 
               <div style={{ gridColumn: "1 / -1" }}>

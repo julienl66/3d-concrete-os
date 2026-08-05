@@ -398,29 +398,59 @@ export default function Planning({ user }) {
       return;
     }
 
-    const payload = {
+    const basePayload = {
       task_date: form.task_date,
       start_time: form.start_time || null,
       end_time: form.end_time || null,
       project_id: form.project_id || null,
       employee_id: (form.employee_ids?.[0] || form.employee_id) || null,
       task_type_id: form.task_type_id || null,
-      title: form.title,
+      title: form.title.trim(),
       notes: form.notes || null,
       status: form.status || "planned",
       priority: form.priority || "normal",
-      task_color: form.task_color || null,
       created_by: user?.id || null,
     };
 
-    const request = editingTask
-      ? supabase.from("production_day_tasks").update(payload).eq("id", editingTask.id).select().single()
-      : supabase.from("production_day_tasks").insert(payload).select().single();
+    const payloadWithColor = {
+      ...basePayload,
+      task_color: form.task_color || null,
+    };
 
-    const { data: savedTask, error } = await request;
+    async function persistTask(payload) {
+      return editingTask
+        ? supabase
+            .from("production_day_tasks")
+            .update(payload)
+            .eq("id", editingTask.id)
+            .select()
+            .single()
+        : supabase
+            .from("production_day_tasks")
+            .insert(payload)
+            .select()
+            .single();
+    }
+
+    let { data: savedTask, error } = await persistTask(payloadWithColor);
+
+    // Compatibilité avec les bases où la colonne task_color n'est pas encore
+    // visible dans le cache Supabase : la création de tâche ne doit jamais être bloquée.
+    if (
+      error
+      && (
+        String(error.message || "").includes("task_color")
+        || String(error.message || "").includes("schema cache")
+      )
+    ) {
+      const retry = await persistTask(basePayload);
+      savedTask = retry.data;
+      error = retry.error;
+    }
 
     if (error) {
       setMessage(error.message);
+      window.alert(`Impossible d'enregistrer la tâche : ${error.message}`);
       return;
     }
 
@@ -1481,10 +1511,10 @@ export default function Planning({ user }) {
             </div>
 
             <div className="planning-modal-actions">
-              <button className="btn secondary" onClick={() => setModalOpen(false)}>
+              <button type="button" className="btn secondary" onClick={() => setModalOpen(false)}>
                 Annuler
               </button>
-              <button className="btn primary" onClick={saveTask}>
+              <button type="button" className="btn primary" onClick={saveTask}>
                 Enregistrer
               </button>
             </div>

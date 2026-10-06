@@ -2700,9 +2700,9 @@ export default function CRM({ user, permissions }) {
         <div className="crm-temperature-filters" aria-label="Filtrer par température">
           {[
             ["all", "Toutes", filteredOpenOpportunities.length],
-            ["hot", "🔥 Chaudes", temperatureGroups.hot.length],
-            ["warm", "🟠 Tièdes", temperatureGroups.warm.length],
             ["cold", "🔵 Froides", temperatureGroups.cold.length],
+            ["warm", "🟠 Tièdes", temperatureGroups.warm.length],
+            ["hot", "🔥 Chaudes", temperatureGroups.hot.length],
           ].map(([value, label, count]) => (
             <button
               type="button"
@@ -2995,7 +2995,7 @@ export default function CRM({ user, permissions }) {
             <span>Glisse une opportunité entre Froid (20 %), Tiède (50 %) et Chaud (80 %). Le Pipeline et le pipe pondéré se mettent à jour automatiquement.</span>
           </div>
           <div className="crm-temperature-board">
-          {["hot", "warm", "cold", "validated", "in_production", "production_completed", "lost"].map((key) => {
+          {["cold", "warm", "hot", "validated", "in_production", "production_completed", "lost"].map((key) => {
             const meta = key === "validated"
               ? { label: "Validé", icon: "✅", hint: "Devis signé, en attente de production" }
               : key === "in_production"

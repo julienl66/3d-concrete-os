@@ -349,10 +349,15 @@ export default function BusinessIntelligence({ user, permissions }) {
   }
 
   function biOpportunityTemperature(contact) {
-    const score = biOpportunityScore(contact);
-    if (score >= 70) return "hot";
-    if (score >= 40) return "warm";
+    const probability = Number(contact?.probability_percent ?? contact?.probability ?? 0);
+    if (probability >= 70) return "hot";
+    if (probability >= 40) return "warm";
     return "cold";
+  }
+
+  function biCommercialProbability(contact) {
+    const temperature = biOpportunityTemperature(contact);
+    return temperature === "hot" ? 80 : temperature === "warm" ? 50 : 20;
   }
 
   function biFirstCommercialStage() {
@@ -384,6 +389,7 @@ export default function BusinessIntelligence({ user, permissions }) {
         subject.includes("prospect ciblé")
         || subject.includes("opportunité créée")
         || subject.includes("qualifiée par probabilité")
+        || subject.includes("qualification commerciale")
         || subject.includes("ajouté manuellement depuis le vivier");
       const realCommercialAction = ["appel", "email", "rdv", "devis"].includes(type);
       return explicitMarker || realCommercialAction;
@@ -598,8 +604,7 @@ export default function BusinessIntelligence({ user, permissions }) {
   const pipelineRaw = crmPipeline;
 
   const pipelineWeighted = openCrmContacts.reduce((sum, contact) => {
-    const probability = Number(contact.probability_percent || contact.probability || 0);
-    return sum + Number(contact.estimated_amount || 0) * (probability / 100);
+    return sum + Number(contact.estimated_amount || 0) * (biCommercialProbability(contact) / 100);
   }, 0);
 
   const forecastMonths = Array.from({ length: 12 }, (_, index) => {
@@ -623,8 +628,7 @@ export default function BusinessIntelligence({ user, permissions }) {
     );
 
     const weighted = monthContacts.reduce((sum, contact) => {
-      const probability = Number(contact.probability_percent || contact.probability || 0);
-      return sum + Number(contact.estimated_amount || 0) * (probability / 100);
+      return sum + Number(contact.estimated_amount || 0) * (biCommercialProbability(contact) / 100);
     }, 0);
 
     return {

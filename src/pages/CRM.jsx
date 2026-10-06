@@ -8,6 +8,14 @@ import { openAlloCall } from "../services/allo.js";
 
 const INTERACTION_TYPES = ["note", "appel", "email", "rdv", "devis", "relance"];
 
+// Qualification commerciale unique utilisée partout dans le CRM et la BI.
+// Le pipe pondéré repose sur ces pourcentages, pas sur un score d'activité variable.
+const TEMPERATURE_LEVELS = {
+  hot: { label: "Chaud", icon: "🔥", probability: 80, hint: "Forte probabilité de concrétisation" },
+  warm: { label: "Tiède", icon: "🟠", probability: 50, hint: "Opportunité à faire avancer" },
+  cold: { label: "Froid", icon: "🔵", probability: 20, hint: "Opportunité faible / à réactiver" },
+};
+
 const COMMERCIAL_PIPELINE = [
   { name: "Suspect ciblé", color: "#64748b", probability: 5, icon: "🎯" },
   { name: "Prospect contacté — sans réponse", color: "#0ea5e9", probability: 10, icon: "📞" },
@@ -362,18 +370,52 @@ export default function CRM({ user, permissions }) {
   }
 
   function opportunityTemperature(contact) {
-    const score = opportunityScore(contact);
-    if (score >= 70) return "hot";
-    if (score >= 40) return "warm";
+    const probability = Number(contact?.probability_percent ?? contact?.probability ?? 0);
+    if (probability >= 70) return "hot";
+    if (probability >= 40) return "warm";
     return "cold";
   }
 
   function temperatureMeta(value) {
-    return {
-      hot: { label: "Chaud", icon: "🔥", hint: "À traiter en priorité" },
-      warm: { label: "Tiède", icon: "🟠", hint: "À faire avancer" },
-      cold: { label: "Froid", icon: "🔵", hint: "À réactiver" },
-    }[value] || { label: "Non classé", icon: "⚪", hint: "" };
+    return TEMPERATURE_LEVELS[value] || { label: "Non classé", icon: "⚪", probability: 0, hint: "" };
+  }
+
+  function commercialProbability(contact) {
+    const temperature = opportunityTemperature(contact);
+    return Number(TEMPERATURE_LEVELS[temperature]?.probability || 0);
+  }
+
+  async function updateContactTemperature(contactId, targetTemperature) {
+    const target = TEMPERATURE_LEVELS[targetTemperature];
+    if (!target) return;
+
+    const contact = contacts.find((item) => item.id === contactId);
+    if (!contact) return;
+
+    const { error } = await supabase
+      .from("crm_contacts")
+      .update({
+        probability_percent: target.probability,
+        status: "active",
+      })
+      .eq("id", contactId);
+
+    if (error) {
+      setMessage(error.message);
+      return;
+    }
+
+    await supabase.from("crm_interactions").insert({
+      contact_id: contactId,
+      interaction_type: "note",
+      subject: `Qualification commerciale : ${target.label}`,
+      notes: `Opportunité classée ${target.label.toLowerCase()} avec une probabilité commerciale de ${target.probability} %.`,
+      created_by: user?.id || null,
+    });
+
+    setDraggedContactId(null);
+    setMessage(`${contact.company_name || "Opportunité"} passe en ${target.label} (${target.probability} %).`);
+    await loadData();
   }
 
   function nextActionForContact(contactId) {
@@ -426,6 +468,7 @@ export default function CRM({ user, permissions }) {
         subject.includes("prospect ciblé")
         || subject.includes("opportunité créée")
         || subject.includes("qualifiée par probabilité")
+        || subject.includes("qualification commerciale")
         || subject.includes("ajouté manuellement depuis le vivier");
 
       // Un vrai contact commercial manuel fait également entrer le prospect dans le pipeline.
@@ -2397,7 +2440,7 @@ export default function CRM({ user, permissions }) {
   }
 
   function weightedPipe(contact) {
-    return Number(contact.estimated_amount || 0) * (Number(contact.probability_percent || contact.probability || 0) / 100);
+    return Number(contact.estimated_amount || 0) * (commercialProbability(contact) / 100);
   }
 
   function priorityLabel(value) {
@@ -2465,7 +2508,7 @@ export default function CRM({ user, permissions }) {
 
         <div className="crm-pipeline-card-amount">
           <strong>{formatMoney(contact.estimated_amount || 0)}</strong>
-          <span>{Number(contact.probability_percent || contact.probability || 0)} %</span>
+          <span>{commercialProbability(contact)} %</span>
         </div>
 
         <div className="crm-pipeline-card-meta">
@@ -2625,7 +2668,7 @@ export default function CRM({ user, permissions }) {
         <div className="crm-command-card hot">
           <span>Opportunités chaudes</span>
           <strong>{hotOpportunities.length}</strong>
-          <small>Probabilité ≥ 70 %</small>
+          <small>Pondération commerciale fixe : 80 %</small>
         </div>
       </div>
 
@@ -2946,7 +2989,12 @@ export default function CRM({ user, permissions }) {
       </div>
 
       {viewMode === "temperature" && (
-        <div className="crm-temperature-board">
+        <>
+          <div className="crm-temperature-guide card">
+            <strong>Qualification commerciale</strong>
+            <span>Glisse une opportunité entre Froid (20 %), Tiède (50 %) et Chaud (80 %). Le Pipeline et le pipe pondéré se mettent à jour automatiquement.</span>
+          </div>
+          <div className="crm-temperature-board">
           {["hot", "warm", "cold", "validated", "in_production", "production_completed", "lost"].map((key) => {
             const meta = key === "validated"
               ? { label: "Validé", icon: "✅", hint: "Devis signé, en attente de production" }
@@ -2960,7 +3008,18 @@ export default function CRM({ user, permissions }) {
             const items = temperatureGroups[key];
 
             return (
-              <section className={`crm-temperature-column ${key}`} key={key}>
+              <section
+                className={`crm-temperature-column ${key} ${["hot", "warm", "cold"].includes(key) ? "droppable" : ""}`}
+                key={key}
+                onDragOver={(event) => {
+                  if (["hot", "warm", "cold"].includes(key)) event.preventDefault();
+                }}
+                onDrop={() => {
+                  if (["hot", "warm", "cold"].includes(key) && draggedContactId) {
+                    updateContactTemperature(draggedContactId, key);
+                  }
+                }}
+              >
                 <header>
                   <div>
                     <span className="crm-temperature-icon">{meta.icon}</span>
@@ -2972,6 +3031,9 @@ export default function CRM({ user, permissions }) {
                   <div className="crm-temperature-column-kpis">
                     <strong>{items.length}</strong>
                     <span>{formatMoney(temperatureAmount(key))}</span>
+                    {["hot", "warm", "cold"].includes(key) && (
+                      <small>{TEMPERATURE_LEVELS[key].probability} % · {formatMoney(items.reduce((sum, contact) => sum + weightedPipe(contact), 0))} pondéré</small>
+                    )}
                   </div>
                 </header>
 
@@ -3007,14 +3069,26 @@ export default function CRM({ user, permissions }) {
                       const nextAction = nextActionForContact(lifecycleContactId);
                       const inactivity = daysSinceLastActivity(lifecycleContactId);
                       return (
-                        <article className="crm-temperature-card" key={contact.id} onClick={() => setSelectedContact(actualContactForLifecycle(contact))}>
+                        <article
+                          className={`crm-temperature-card ${["hot", "warm", "cold"].includes(key) ? "draggable" : ""}`}
+                          key={contact.id}
+                          draggable={["hot", "warm", "cold"].includes(key)}
+                          onDragStart={(event) => {
+                            if (!["hot", "warm", "cold"].includes(key)) return;
+                            setDraggedContactId(contact.id);
+                            event.dataTransfer.effectAllowed = "move";
+                            event.dataTransfer.setData("text/plain", String(contact.id));
+                          }}
+                          onDragEnd={() => setDraggedContactId(null)}
+                          onClick={() => setSelectedContact(actualContactForLifecycle(contact))}
+                        >
                           <div className="crm-temperature-card-head">
                             <div>
                               <strong>{contact.company_name}</strong>
                               <small>{stageName(contact.stage_id)} · {employeeName(contact.assigned_to)}</small>
                             </div>
                             <span className={`crm-score-badge ${key}`}>
-                              {key === "validated" ? "✓" : key === "in_production" ? "🏭" : key === "production_completed" ? "✅" : key === "lost" ? "✕" : opportunityScore(contact)}
+                              {key === "validated" ? "✓" : key === "in_production" ? "🏭" : key === "production_completed" ? "✅" : key === "lost" ? "✕" : `${TEMPERATURE_LEVELS[key]?.probability || 0}%`}
                             </span>
                           </div>
 
@@ -3025,7 +3099,7 @@ export default function CRM({ user, permissions }) {
                                 ? `Signé le ${linkedProject(contact)?.signed_date || "date non définie"}`
                                 : key === "in_production"
                                   ? `Démarré le ${linkedProject(contact)?.production_start_date || "date non définie"}`
-                                  : `${Number(contact.probability_percent || contact.probability || 0)} % · pondéré ${formatMoney(weightedPipe(contact))}`}
+                                  : `${commercialProbability(contact)} % · pondéré ${formatMoney(weightedPipe(contact))}`}
                             </span>
                           </div>
 
@@ -3068,7 +3142,8 @@ export default function CRM({ user, permissions }) {
               </section>
             );
           })}
-        </div>
+          </div>
+        </>
       )}
 
       {viewMode === "board" && (
@@ -3083,8 +3158,10 @@ export default function CRM({ user, permissions }) {
             </div>
           )}
           <div className="crm-board-summary">
-            <span>{pipelineContacts.length} opportunité(s) affichée(s)</span>
-            <strong>{formatMoney(crmPipelineWeighted)} pondéré</strong>
+            <span>
+              {pipelineContacts.length} opportunité(s) · vue {temperatureFilter === "all" ? "globale" : temperatureMeta(temperatureFilter).label}
+            </span>
+            <strong>{formatMoney(crmPipelineRaw)} brut · {formatMoney(crmPipelineWeighted)} pondéré</strong>
           </div>
 
           <div className="crm-board">

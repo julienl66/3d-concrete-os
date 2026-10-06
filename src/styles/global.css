@@ -9834,3 +9834,26 @@ textarea:focus {
   .maintenance-description { grid-column: auto; }
   .maintenance-list-row { align-items: flex-start; flex-direction: column; }
 }
+
+
+/* CRM V2 - température commerciale pilotable */
+.crm-temperature-guide {
+  margin-bottom: 14px;
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.crm-temperature-guide strong { color: #0f172a; }
+.crm-temperature-guide span { color: #64748b; font-size: 13px; }
+.crm-temperature-column.droppable { transition: box-shadow .16s ease, transform .16s ease; }
+.crm-temperature-column.droppable:hover { box-shadow: 0 10px 28px rgba(15, 23, 42, .08); }
+.crm-temperature-card.draggable { cursor: grab; }
+.crm-temperature-card.draggable:active { cursor: grabbing; opacity: .72; }
+.crm-temperature-column-kpis small {
+  display: block;
+  margin-top: 3px;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 700;
+}

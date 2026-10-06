@@ -113,8 +113,8 @@ export default function Dashboard({ user }) {
         .order("entry_date", { ascending: false }),
       supabase
         .from("projects")
-        .select("id, name, project_code, sale_amount, signed_date, created_at")
-        .eq("active", true),      supabase
+        .select("id, name, project_code, sale_amount, signed_date, created_at"),
+      supabase
         .from("weekly_tasks")
         .select("*")
         .order("created_at", { ascending: false }),

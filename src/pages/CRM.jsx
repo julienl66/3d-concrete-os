@@ -595,8 +595,19 @@ export default function CRM({ user, permissions }) {
     return type === "devis" || subject.includes("devis") || action.includes("devis");
   });
 
-  const openOpportunities = contacts.filter((contact) => isPipelineContact(contact) && isOpenOpportunity(contact));
-  const pipelineContacts = filteredContacts.filter(isPipelineContact);
+  function isVisibleInCommercialPipeline(contact) {
+    if (!isPipelineContact(contact)) return false;
+    const lifecycle = opportunityLifecycle(contact);
+    // Un devis validé reste visible dans le pipeline commercial jusqu'au lancement
+    // de la production. Dès que le projet passe en production (ou est terminé),
+    // le suivi quitte le pipeline commercial et reste uniquement dans le cycle projet.
+    return !["in_production", "production_completed"].includes(lifecycle);
+  }
+
+  const openOpportunities = contacts.filter(
+    (contact) => isVisibleInCommercialPipeline(contact) && isOpenOpportunity(contact)
+  );
+  const pipelineContacts = filteredContacts.filter(isVisibleInCommercialPipeline);
   const filteredOpenOpportunities = pipelineContacts.filter(isOpenOpportunity);
 
   const crmPipelineRaw = filteredOpenOpportunities.reduce(
@@ -2992,7 +3003,7 @@ export default function CRM({ user, permissions }) {
         <>
           <div className="crm-temperature-guide card">
             <strong>Qualification commerciale</strong>
-            <span>Glisse une opportunité entre Froid (20 %), Tiède (50 %) et Chaud (80 %). Le Pipeline et le pipe pondéré se mettent à jour automatiquement.</span>
+            <span>Ordre commercial : Froid (20 %) → Tiède (50 %) → Chaud (80 %). Glisse une opportunité d’une colonne à l’autre : le Pipeline et le pipe pondéré se mettent à jour automatiquement.</span>
           </div>
           <div className="crm-temperature-board">
           {["cold", "warm", "hot", "validated", "in_production", "production_completed", "lost"].map((key) => {

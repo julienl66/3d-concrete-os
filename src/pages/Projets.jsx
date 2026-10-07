@@ -42,6 +42,8 @@ export default function Projets({ user, permissions }) {
   const [selectedDocumentCategory, setSelectedDocumentCategory] = useState("Commercial");
   const [view, setView] = useState("list");
   const [message, setMessage] = useState("");
+  const [draggedProjectId, setDraggedProjectId] = useState(null);
+  const [dragOverPriority, setDragOverPriority] = useState(null);
 
   const [form, setForm] = useState({
     client_name: "",
@@ -1587,8 +1589,118 @@ export default function Projets({ user, permissions }) {
   }
 
   const submittedRequests = requests.filter((request) => request.status === "submitted");
-  const activeProjects = projects.filter((project) => project.active);
+
+  const PROJECT_PRIORITIES = [
+    { key: "urgent", label: "Urgente", icon: "🔴" },
+    { key: "high", label: "Haute", icon: "🟠" },
+    { key: "normal", label: "Normale", icon: "🔵" },
+    { key: "low", label: "Basse", icon: "⚪" },
+  ];
+
+  function projectPriority(project) {
+    const value = String(project?.priority || "normal").toLowerCase();
+    return PROJECT_PRIORITIES.some((item) => item.key === value) ? value : "normal";
+  }
+
+  function projectPriorityMeta(projectOrPriority) {
+    const key = typeof projectOrPriority === "string" ? projectOrPriority : projectPriority(projectOrPriority);
+    return PROJECT_PRIORITIES.find((item) => item.key === key) || PROJECT_PRIORITIES[2];
+  }
+
+  function projectSortValue(project) {
+    const value = Number(project?.project_order);
+    return Number.isFinite(value) ? value : 999999;
+  }
+
+  const activeProjects = projects
+    .filter((project) => project.active)
+    .sort((a, b) => {
+      const priorityA = PROJECT_PRIORITIES.findIndex((item) => item.key === projectPriority(a));
+      const priorityB = PROJECT_PRIORITIES.findIndex((item) => item.key === projectPriority(b));
+      if (priorityA !== priorityB) return priorityA - priorityB;
+      const orderDiff = projectSortValue(a) - projectSortValue(b);
+      if (orderDiff !== 0) return orderDiff;
+      return String(a.name || "").localeCompare(String(b.name || ""), "fr");
+    });
   const archivedProjects = projects.filter((project) => !project.active);
+
+  function projectsForPriority(priority) {
+    return activeProjects
+      .filter((project) => projectPriority(project) === priority)
+      .sort((a, b) => projectSortValue(a) - projectSortValue(b));
+  }
+
+  async function persistPriorityOrder(priority, orderedProjects) {
+    const updates = orderedProjects.map((project, index) =>
+      supabase
+        .from("projects")
+        .update({ priority, project_order: index + 1 })
+        .eq("id", project.id)
+    );
+
+    const results = await Promise.all(updates);
+    const firstError = results.find((result) => result.error)?.error;
+    if (firstError) {
+      setMessage(firstError.message);
+      return false;
+    }
+    return true;
+  }
+
+  async function moveProjectToPriority(projectId, targetPriority, beforeProjectId = null) {
+    if (!hasRight("can_edit")) {
+      setMessage("Action non autorisée.");
+      return;
+    }
+
+    const project = projects.find((item) => String(item.id) === String(projectId));
+    if (!project) return;
+
+    const sourcePriority = projectPriority(project);
+    const targetProjects = projectsForPriority(targetPriority)
+      .filter((item) => String(item.id) !== String(projectId));
+
+    let insertIndex = targetProjects.length;
+    if (beforeProjectId) {
+      const targetIndex = targetProjects.findIndex((item) => String(item.id) === String(beforeProjectId));
+      if (targetIndex >= 0) insertIndex = targetIndex;
+    }
+
+    targetProjects.splice(insertIndex, 0, { ...project, priority: targetPriority });
+
+    if (sourcePriority !== targetPriority) {
+      const sourceProjects = projectsForPriority(sourcePriority)
+        .filter((item) => String(item.id) !== String(projectId));
+      const sourceSaved = await persistPriorityOrder(sourcePriority, sourceProjects);
+      if (!sourceSaved) return;
+    }
+
+    const targetSaved = await persistPriorityOrder(targetPriority, targetProjects);
+    if (!targetSaved) return;
+
+    setDraggedProjectId(null);
+    setDragOverPriority(null);
+    setMessage(`Projet déplacé en priorité ${projectPriorityMeta(targetPriority).label.toLowerCase()}.`);
+    await loadData();
+  }
+
+  async function changeProjectPriority(project) {
+    if (!hasRight("can_edit")) {
+      setMessage("Action non autorisée.");
+      return;
+    }
+
+    const labels = PROJECT_PRIORITIES.map((item, index) => `${index + 1}. ${item.label}`).join("\n");
+    const currentIndex = PROJECT_PRIORITIES.findIndex((item) => item.key === projectPriority(project));
+    const choice = window.prompt(`Priorité du projet :\n${labels}`, String(Math.max(0, currentIndex) + 1));
+    if (choice === null) return;
+    const selected = PROJECT_PRIORITIES[Number(choice) - 1];
+    if (!selected) {
+      setMessage("Priorité invalide.");
+      return;
+    }
+    await moveProjectToPriority(project.id, selected.key);
+  }
 
   function statusLabel(status) {
     const labels = {
@@ -1959,46 +2071,109 @@ export default function Projets({ user, permissions }) {
             </table>
           </div>
 
-          <div className="card">
-            <h3>Tous les projets actifs</h3>
+          <div className="card project-priority-section">
+            <div className="page-head">
+              <div>
+                <h3>Projets actifs par priorité</h3>
+                <p>Glisse un projet pour changer sa priorité ou réorganiser l'ordre de travail.</p>
+              </div>
+              <strong>{activeProjects.length}</strong>
+            </div>
 
-            <div className="project-cards-grid">
-              {activeProjects.map((project) => (
-                <article className="project-tile" key={project.id}>
-                  <div className="project-tile-head">
-                    <span>{project.project_code || "Sans code"}</span>
-                    <span className="status-pill validated">
-                      {statusLabel(project.status)}
-                    </span>
-                  </div>
+            <div className="project-priority-board">
+              {PROJECT_PRIORITIES.map((priority) => {
+                const priorityProjects = projectsForPriority(priority.key);
+                const total = priorityProjects.reduce((sum, project) => sum + Number(project.sale_amount || 0), 0);
+                return (
+                  <section
+                    className={`project-priority-column ${priority.key} ${dragOverPriority === priority.key ? "drag-over" : ""}`}
+                    key={priority.key}
+                    onDragOver={(event) => {
+                      event.preventDefault();
+                      setDragOverPriority(priority.key);
+                    }}
+                    onDragLeave={() => setDragOverPriority(null)}
+                    onDrop={(event) => {
+                      event.preventDefault();
+                      const projectId = event.dataTransfer.getData("text/project-id") || draggedProjectId;
+                      if (projectId) moveProjectToPriority(projectId, priority.key);
+                    }}
+                  >
+                    <header className="project-priority-column-head">
+                      <div>
+                        <strong>{priority.icon} {priority.label}</strong>
+                        <small>{priorityProjects.length} projet(s)</small>
+                      </div>
+                      <span>{formatMoney(total)}</span>
+                    </header>
 
-                  <h3>{project.name}</h3>
-                  <p>{project.client_name || "-"}</p>
+                    <div className="project-priority-list">
+                      {priorityProjects.length === 0 ? (
+                        <div className="project-priority-empty">Dépose un projet ici</div>
+                      ) : (
+                        priorityProjects.map((project) => (
+                          <article
+                            className={`project-tile project-priority-tile ${String(draggedProjectId) === String(project.id) ? "dragging" : ""}`}
+                            key={project.id}
+                            draggable={hasRight("can_edit")}
+                            onDragStart={(event) => {
+                              setDraggedProjectId(project.id);
+                              event.dataTransfer.effectAllowed = "move";
+                              event.dataTransfer.setData("text/project-id", String(project.id));
+                            }}
+                            onDragEnd={() => {
+                              setDraggedProjectId(null);
+                              setDragOverPriority(null);
+                            }}
+                            onDragOver={(event) => {
+                              event.preventDefault();
+                              event.stopPropagation();
+                              setDragOverPriority(priority.key);
+                            }}
+                            onDrop={(event) => {
+                              event.preventDefault();
+                              event.stopPropagation();
+                              const projectId = event.dataTransfer.getData("text/project-id") || draggedProjectId;
+                              if (projectId && String(projectId) !== String(project.id)) {
+                                moveProjectToPriority(projectId, priority.key, project.id);
+                              }
+                            }}
+                          >
+                            <div className="project-tile-head">
+                              <span>{project.project_code || "Sans code"}</span>
+                              <span className="status-pill validated">{statusLabel(project.status)}</span>
+                            </div>
 
-                  <div className="progress-line">
-                    <div style={{ width: `${progress(project)}%` }} />
-                  </div>
+                            <div className="project-priority-chip" onClick={() => changeProjectPriority(project)} title="Modifier la priorité">
+                              {priority.icon} {priority.label}
+                            </div>
 
-                  <div className="project-tile-meta">
-                    <span>{progress(project)} %</span>
-                    <span>Liv. {project.validated_delivery_date || "-"}</span>
-                  </div>
+                            <h3>{project.name}</h3>
+                            <p>{project.client_name || "-"}</p>
 
-                  <div className="inline-actions">
-                    <button className="btn primary" onClick={() => openProject(project)}>
-                      Ouvrir
-                    </button>
+                            <div className="progress-line">
+                              <div style={{ width: `${progress(project)}%` }} />
+                            </div>
 
-                    <button className="btn small" onClick={() => archiveProject(project)}>
-                      Archiver
-                    </button>
+                            <div className="project-tile-meta">
+                              <span>{progress(project)} %</span>
+                              <span>Liv. {project.validated_delivery_date || "-"}</span>
+                            </div>
 
-                    <button className="btn small danger-soft" onClick={() => deleteProject(project)}>
-                      Supprimer
-                    </button>
-                  </div>
-                </article>
-              ))}
+                            <div className="project-priority-drag-hint">⋮⋮ Glisser pour déplacer</div>
+
+                            <div className="inline-actions">
+                              <button className="btn primary" onClick={() => openProject(project)}>Ouvrir</button>
+                              <button className="btn small" onClick={() => archiveProject(project)}>Archiver</button>
+                              <button className="btn small danger-soft" onClick={() => deleteProject(project)}>Supprimer</button>
+                            </div>
+                          </article>
+                        ))
+                      )}
+                    </div>
+                  </section>
+                );
+              })}
             </div>
           </div>
 

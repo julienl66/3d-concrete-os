@@ -9857,3 +9857,80 @@ textarea:focus {
   font-size: 11px;
   font-weight: 700;
 }
+
+/* Priorisation visuelle des projets */
+.project-priority-section { overflow: hidden; }
+.project-priority-board {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(270px, 1fr));
+  gap: 14px;
+  overflow-x: auto;
+  padding: 4px 2px 12px;
+}
+.project-priority-column {
+  min-width: 270px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 18px;
+  padding: 12px;
+  transition: background .18s ease, border-color .18s ease, transform .18s ease;
+}
+.project-priority-column.drag-over {
+  background: #eef6ff;
+  border-color: #2563eb;
+  transform: translateY(-2px);
+}
+.project-priority-column.urgent { border-top: 5px solid #dc2626; }
+.project-priority-column.high { border-top: 5px solid #f97316; }
+.project-priority-column.normal { border-top: 5px solid #2563eb; }
+.project-priority-column.low { border-top: 5px solid #94a3b8; }
+.project-priority-column-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.project-priority-column-head div { display: grid; gap: 2px; }
+.project-priority-column-head small { color: var(--muted); }
+.project-priority-column-head > span { font-size: 12px; font-weight: 800; color: #475569; }
+.project-priority-list { display: grid; gap: 12px; min-height: 120px; }
+.project-priority-empty {
+  display: grid;
+  place-items: center;
+  min-height: 100px;
+  border: 1px dashed #cbd5e1;
+  border-radius: 14px;
+  color: #94a3b8;
+  font-size: 13px;
+}
+.project-priority-tile {
+  padding: 15px;
+  border-radius: 16px;
+  cursor: grab;
+  box-shadow: 0 8px 22px rgba(15, 23, 42, .06);
+}
+.project-priority-tile:active { cursor: grabbing; }
+.project-priority-tile.dragging { opacity: .45; transform: scale(.98); }
+.project-priority-chip {
+  display: inline-flex;
+  width: fit-content;
+  align-items: center;
+  gap: 5px;
+  margin-top: 10px;
+  padding: 5px 8px;
+  border-radius: 999px;
+  background: #f1f5f9;
+  font-size: 11px;
+  font-weight: 800;
+  cursor: pointer;
+}
+.project-priority-drag-hint {
+  margin: 10px 0 4px;
+  color: #94a3b8;
+  font-size: 11px;
+  text-align: center;
+}
+@media (max-width: 1200px) {
+  .project-priority-board { grid-template-columns: repeat(4, minmax(250px, 1fr)); }
+}

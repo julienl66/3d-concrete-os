@@ -1684,6 +1684,30 @@ export default function Projets({ user, permissions }) {
     await loadData();
   }
 
+  async function moveProjectWithinPriority(project, direction) {
+    if (!hasRight("can_edit")) {
+      setMessage("Action non autorisée.");
+      return;
+    }
+
+    const priority = projectPriority(project);
+    const ordered = projectsForPriority(priority);
+    const index = ordered.findIndex((item) => String(item.id) === String(project.id));
+    if (index < 0) return;
+
+    const nextIndex = direction === "up" ? index - 1 : index + 1;
+    if (nextIndex < 0 || nextIndex >= ordered.length) return;
+
+    const next = [...ordered];
+    [next[index], next[nextIndex]] = [next[nextIndex], next[index]];
+
+    const saved = await persistPriorityOrder(priority, next);
+    if (!saved) return;
+
+    setMessage(`Ordre des projets ${projectPriorityMeta(priority).label.toLowerCase()} mis à jour.`);
+    await loadData();
+  }
+
   async function changeProjectPriority(project) {
     if (!hasRight("can_edit")) {
       setMessage("Action non autorisée.");
@@ -2111,34 +2135,38 @@ export default function Projets({ user, permissions }) {
                       {priorityProjects.length === 0 ? (
                         <div className="project-priority-empty">Dépose un projet ici</div>
                       ) : (
-                        priorityProjects.map((project) => (
-                          <article
-                            className={`project-tile project-priority-tile ${String(draggedProjectId) === String(project.id) ? "dragging" : ""}`}
-                            key={project.id}
-                            draggable={hasRight("can_edit")}
-                            onDragStart={(event) => {
-                              setDraggedProjectId(project.id);
-                              event.dataTransfer.effectAllowed = "move";
-                              event.dataTransfer.setData("text/project-id", String(project.id));
-                            }}
-                            onDragEnd={() => {
-                              setDraggedProjectId(null);
-                              setDragOverPriority(null);
-                            }}
-                            onDragOver={(event) => {
-                              event.preventDefault();
-                              event.stopPropagation();
-                              setDragOverPriority(priority.key);
-                            }}
-                            onDrop={(event) => {
-                              event.preventDefault();
-                              event.stopPropagation();
-                              const projectId = event.dataTransfer.getData("text/project-id") || draggedProjectId;
-                              if (projectId && String(projectId) !== String(project.id)) {
-                                moveProjectToPriority(projectId, priority.key, project.id);
-                              }
-                            }}
-                          >
+                        priorityProjects.map((project, projectIndex) => (
+                          <div className="project-priority-drop-wrapper" key={project.id}>
+                            <div
+                              className="project-priority-drop-zone"
+                              onDragOver={(event) => {
+                                event.preventDefault();
+                                event.stopPropagation();
+                                setDragOverPriority(priority.key);
+                              }}
+                              onDrop={(event) => {
+                                event.preventDefault();
+                                event.stopPropagation();
+                                const projectId = event.dataTransfer.getData("text/project-id") || draggedProjectId;
+                                if (projectId && String(projectId) !== String(project.id)) {
+                                  moveProjectToPriority(projectId, priority.key, project.id);
+                                }
+                              }}
+                              title="Déposer ici pour placer le projet avant celui-ci"
+                            />
+                            <article
+                              className={`project-tile project-priority-tile ${String(draggedProjectId) === String(project.id) ? "dragging" : ""}`}
+                              draggable={hasRight("can_edit")}
+                              onDragStart={(event) => {
+                                setDraggedProjectId(project.id);
+                                event.dataTransfer.effectAllowed = "move";
+                                event.dataTransfer.setData("text/project-id", String(project.id));
+                              }}
+                              onDragEnd={() => {
+                                setDraggedProjectId(null);
+                                setDragOverPriority(null);
+                              }}
+                            >
                             <div className="project-tile-head">
                               <span>{project.project_code || "Sans code"}</span>
                               <span className="status-pill validated">{statusLabel(project.status)}</span>
@@ -2162,12 +2190,50 @@ export default function Projets({ user, permissions }) {
 
                             <div className="project-priority-drag-hint">⋮⋮ Glisser pour déplacer</div>
 
+                            <div className="project-priority-order-actions">
+                              <button
+                                type="button"
+                                className="btn small"
+                                onClick={() => moveProjectWithinPriority(project, "up")}
+                                disabled={projectIndex === 0}
+                              >
+                                ↑ Monter
+                              </button>
+                              <button
+                                type="button"
+                                className="btn small"
+                                onClick={() => moveProjectWithinPriority(project, "down")}
+                                disabled={projectIndex === priorityProjects.length - 1}
+                              >
+                                ↓ Descendre
+                              </button>
+                            </div>
+
                             <div className="inline-actions">
                               <button className="btn primary" onClick={() => openProject(project)}>Ouvrir</button>
                               <button className="btn small" onClick={() => archiveProject(project)}>Archiver</button>
                               <button className="btn small danger-soft" onClick={() => deleteProject(project)}>Supprimer</button>
                             </div>
                           </article>
+
+                          {projectIndex === priorityProjects.length - 1 && (
+                            <div
+                              className="project-priority-drop-zone bottom"
+                              onDragOver={(event) => {
+                                event.preventDefault();
+                                event.stopPropagation();
+                                setDragOverPriority(priority.key);
+                              }}
+                              onDrop={(event) => {
+                                event.preventDefault();
+                                event.stopPropagation();
+                                const projectId = event.dataTransfer.getData("text/project-id") || draggedProjectId;
+                                if (projectId) moveProjectToPriority(projectId, priority.key);
+                              }}
+                              title="Déposer ici pour placer le projet en dernier"
+                            />
+                          )}
+                          </div>
                         ))
                       )}
                     </div>

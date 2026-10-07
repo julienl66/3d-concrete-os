@@ -9934,3 +9934,11 @@ textarea:focus {
 @media (max-width: 1200px) {
   .project-priority-board { grid-template-columns: repeat(4, minmax(250px, 1fr)); }
 }
+
+
+.project-priority-drop-wrapper { display: grid; gap: 4px; }
+.project-priority-drop-zone { min-height: 10px; border-radius: 8px; transition: min-height .15s ease, background .15s ease, border .15s ease; border: 1px dashed transparent; }
+.project-priority-column.drag-over .project-priority-drop-zone { min-height: 18px; border-color: rgba(37, 99, 235, .35); background: rgba(37, 99, 235, .06); }
+.project-priority-drop-zone.bottom { min-height: 18px; }
+.project-priority-order-actions { display: flex; gap: 6px; margin-top: 8px; }
+.project-priority-order-actions .btn { flex: 1; }

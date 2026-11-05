@@ -9942,3 +9942,14 @@ textarea:focus {
 .project-priority-drop-zone.bottom { min-height: 18px; }
 .project-priority-order-actions { display: flex; gap: 6px; margin-top: 8px; }
 .project-priority-order-actions .btn { flex: 1; }
+
+/* Suivi temps robots */
+.robot-time-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; margin: 14px 0; }
+.robot-time-fields label { display: flex; flex-direction: column; gap: 6px; }
+.robot-time-fields input, .robot-time-fields select, .robot-time-inline input { width: 100%; min-width: 0; padding: 10px; border: 1px solid #cbd5e1; border-radius: 8px; background: var(--surface, #fff); color: inherit; }
+.robot-time-wide { grid-column: 1 / -1; }
+.robot-time-inline { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: 14px 0; }
+.robot-time-clock { font-size: clamp(2.4rem, 7vw, 4.5rem); font-weight: 750; font-variant-numeric: tabular-nums; letter-spacing: .04em; margin: 12px 0; }
+.robot-time-scroll { overflow-x: auto; }
+.robot-time-scroll table { width: 100%; border-collapse: collapse; }
+.robot-time-scroll th, .robot-time-scroll td { padding: 10px; border-bottom: 1px solid #ddd; text-align: left; }
